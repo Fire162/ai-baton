@@ -20,7 +20,7 @@ git clone https://github.com/MdaaaaO/ai-baton.git .claude && sh .claude/setup.sh
 ```
 
 > **Never clone into your home directory.** `~/.claude` is Claude Code's own config directory; `setup.sh` refuses
-> `$HOME` as the workspace root. Moving the kit out of `.claude/` is tracked in [#168](https://github.com/MdaaaaO/ai-baton/issues/168).
+> `$HOME` as the workspace root.
 
 ## Why a kit
 
