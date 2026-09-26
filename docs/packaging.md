@@ -23,7 +23,9 @@ workspace, the root `CLAUDE.md` imports, the root `Makefile` include, the git ho
 **Env store location: one place on both paths.** `.context/reference/env/` next to the workspace — it is *project*
 data (one machine = one environment = one workspace root), not plugin data, so `${CLAUDE_PLUGIN_DATA}` is not used
 for it. `kit_profile.context_root()` resolves `CONTEXT_ROOT`, then the `.context/` beside the kit (clone path, also
-from a worktree), then `CLAUDE_PROJECT_DIR/.context` (plugin path).
+from a worktree), then `CLAUDE_PROJECT_DIR/.context` (plugin path; the SessionStart hook exports it for Bash), then —
+on a plugin install only, when neither variable is set — the nearest `.context/reference/env/config.json` above the
+current directory, stopping below `$HOME` (#3).
 
 **Nothing stateful under the plugin root.** `${CLAUDE_PLUGIN_ROOT}` changes on every update; state is `.context/`
 (or `${CLAUDE_PLUGIN_DATA}` for plugin-private caches, none today). Skills cross-reference each other by name
@@ -46,6 +48,13 @@ from a worktree), then `CLAUDE_PROJECT_DIR/.context` (plugin path).
   `${CLAUDE_PLUGIN_ROOT}` (open item below) a plugin install alone gives the skills whose bodies need no engine
   script; the full kit still wants the clone.
 
+  **Not wired on the plugin path yet (#3).** The seeded root `CLAUDE.md` imports `@.claude/WORKSPACE.md` and the root
+  `Makefile` does `include .claude/workspace.mk`; a plugin install puts neither file in `<root>/.claude/`, so the
+  always-on rules load nothing and every `make` fails. `kit-health` § 4 reports both as errors (it checks the
+  targets, not just the lines). What does work: the engine finds the workspace's `.context/` (the SessionStart hook
+  exports `CLAUDE_PROJECT_DIR`, and `kit_profile.context_root()` walks up from the current directory), and
+  kit-health names the installed kit from `installed_plugins.json` + `plugin.json` where there is no git checkout.
+
 ## Identity (#116)
 
 The user's own values — name, GitHub login, timezone, optional chat DM ids — are the one input the kit needs per
@@ -53,7 +62,7 @@ person. Two sources, one reader:
 
 | path | source | how it reaches a script |
 |---|---|---|
-| plugin | `plugin.json` `userConfig` (`user_name`, `github_login`, `tz`, `slack_self_dm`, `slack_lattice_dm`), asked for by `/plugin configure ai-baton` or `claude plugin install --config key=value`; the chat ids are `sensitive` (masked, secure storage) | Claude Code hands them to hooks as `CLAUDE_PLUGIN_OPTION_<KEY>`; the `hooks/hooks.json` SessionStart hook runs `kit_profile.py identity-env`, which appends `export WORKSPACE_*=…` to `$CLAUDE_ENV_FILE`, so every later Bash command sees them |
+| plugin | `plugin.json` `userConfig` (`user_name`, `github_login`, `tz`, `slack_self_dm`, `slack_lattice_dm`), asked for by `/plugin configure ai-baton` or `claude plugin install --config key=value`; the chat ids are `sensitive` (masked, secure storage) | Claude Code hands them to hooks as `CLAUDE_PLUGIN_OPTION_<KEY>`; the `hooks/hooks.json` SessionStart hook runs `kit_profile.py session-env`, which appends `export WORKSPACE_*=…` (and `CLAUDE_PROJECT_DIR`, which the Bash tool is not handed, #3) to `$CLAUDE_ENV_FILE`, so every later Bash command sees them — from the *next* session on: a `/plugin configure` mid-session reaches Bash after a restart |
 | clone | the `env` block of the ignored `.claude/settings.local.json` (`settings.local.example.json`) | merged into every Bash, hook and subagent environment by Claude Code |
 
 `kit_profile.identity(var)` reads the option first, then the `WORKSPACE_*` variable, so a value typed into `/config`
