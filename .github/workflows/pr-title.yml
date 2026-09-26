@@ -1,0 +1,56 @@
+name: pr-title
+
+# Kit PRs are squash-merged, so the PR title becomes the commit subject on main — and that subject becomes
+# the CHANGELOG.md line of the next release (docs/contributing.md § Releases). Two checks, one job:
+#   conventional-release check-title — the types .conventional-release.toml knows (what the changelog groups by)
+#   commit_style.py title            — the kit's own rule on top (≤ 72 chars, no trailing period; docs/commit-style.md)
+# Inline rather than conventional-release's reusable pr-title.yml, so the kit's own rule runs in the same job.
+# PR-triggered, so it runs on GitHub-hosted runners, never the self-hosted one (docs/contributing.md § Where CI runs; #120).
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  pr-title:
+    name: pr-title
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # The checker and the types come from the base commit, so a PR cannot relax the rule that judges
+      # its own title (a change to them takes effect for the PRs after it).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Title is a Conventional Commit
+        env:
+          TOOL: conventional-release>=0.2,<1
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          uvx --from "$TOOL" conventional-release check-title "$TITLE"
+          python3 context-db/bin/commit_style.py title --style conventional "$TITLE"
+
+  # Every change comes from an issue (docs/contributing.md, "From issue to merge"). The rule and the
+  # parser live in .github/scripts/check-pr-issue.sh — run it locally before `gh pr create`.
+  pr-issue:
+    name: pr-issue
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read  # the check looks each linked issue up
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: PR description links the issue it came from
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          GH_TOKEN: ${{ github.token }}
+        run: ./.github/scripts/check-pr-issue.sh

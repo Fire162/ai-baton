@@ -1,0 +1,7 @@
+# conventional-release (https://github.com/MdaaaaO/conventional-release) — kit releases, docs/contributing.md § Releases.
+# The kit is no package: a release is a CHANGELOG.md section, the VERSION bump, a vX.Y.Z tag and a GitHub
+# Release. Types are the tool's default Angular set, the same list as docs/commit-style.md.
+version-files = ["VERSION", ".claude-plugin/plugin.json"]  # kit-verify checks the two agree
+changelog = "CHANGELOG.md"
+base-branch = "main"
+tag-prefix = "v"

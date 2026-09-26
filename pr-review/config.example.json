@@ -1,0 +1,158 @@
+{
+  "login": "<your-github-login>",
+  "owner": "<org>",
+  "sweep_repos": [
+    "<org>/<repo-a>",
+    "<org>/<repo-b>"
+  ],
+  "days": 14,
+  "max_rows": 8,
+  "enrich_cap": 40,
+  "deep_lines": 600,
+  "bots": [
+    "dependabot[bot]",
+    "renovate[bot]",
+    "github-actions[bot]",
+    "<review-bot-login>",
+    "copilot"
+  ],
+  "footer": "",
+  "auto_approve": {
+    "mode": "shadow",
+    "_modes": "off | shadow (gate + runner run, 'would approve' logged, nothing posted) | live (APPROVE posted as login)",
+    "decided": "<YYYY-MM-DD>",
+    "shadow_review_due": "<YYYY-MM-DD>",
+    "classes": [
+      "docs",
+      "patch-bump"
+    ],
+    "max_files": 10,
+    "max_lines": 200,
+    "bot_authors": [
+      "dependabot[bot]",
+      "renovate[bot]"
+    ],
+    "require_bot_review": [
+      "<org>/<repo-a>"
+    ],
+    "docs_globs": [
+      "*.md",
+      "**/*.md",
+      "*.rst",
+      "**/*.rst",
+      "docs/**",
+      "**/docs/**",
+      "*.txt",
+      "**/*.txt"
+    ],
+    "manifest_globs": [
+      "pyproject.toml",
+      "**/pyproject.toml",
+      "requirements*.txt",
+      "**/requirements*.txt",
+      "package.json",
+      "**/package.json",
+      "go.mod",
+      "**/go.mod",
+      "Dockerfile",
+      "**/Dockerfile",
+      "Dockerfile.*",
+      "**/Dockerfile.*",
+      ".pre-commit-config.yaml",
+      "**/.pre-commit-config.yaml",
+      "packages.yml",
+      "**/packages.yml",
+      ".tool-versions",
+      "**/.tool-versions",
+      "Cargo.toml",
+      "**/Cargo.toml",
+      ".python-version",
+      "**/.python-version"
+    ],
+    "lock_globs": [
+      "uv.lock",
+      "**/uv.lock",
+      "package-lock.json",
+      "**/package-lock.json",
+      "pnpm-lock.yaml",
+      "**/pnpm-lock.yaml",
+      "yarn.lock",
+      "**/yarn.lock",
+      "go.sum",
+      "**/go.sum",
+      "Cargo.lock",
+      "**/Cargo.lock",
+      "poetry.lock",
+      "**/poetry.lock",
+      "package-lock.yml",
+      "**/package-lock.yml"
+    ],
+    "exclude_globs": [
+      "dags/**",
+      "**/dags/**",
+      "plugins/**",
+      "dbt/models/**/*.sql",
+      "dbt/macros/**",
+      "**/*.sql",
+      "**/*.py",
+      "**/*.go",
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.proto",
+      "**/*.tf",
+      "**/*.yaml",
+      "**/*.yml"
+    ],
+    "dev_tooling": [
+      "ruff",
+      "black",
+      "mypy",
+      "pytest",
+      "pre-commit",
+      "sqlfluff",
+      "sqlfluff-templater-dbt",
+      "pyright",
+      "isort",
+      "flake8",
+      "pylint",
+      "coverage",
+      "types-",
+      "eslint",
+      "prettier",
+      "typescript",
+      "@types/",
+      "vitest",
+      "jest",
+      "golangci-lint",
+      "astro-cli"
+    ],
+    "hard_exclude_globs": [
+      ".github/**",
+      "**/.github/**",
+      ".claude/**",
+      "**/.claude/**",
+      "CODEOWNERS",
+      "**/CODEOWNERS"
+    ],
+    "_scope_note": "GitHub-Actions bumps under .github/workflows are hard-excluded in v1 (owner to decide); lock-only PRs are not eligible",
+    "owner_teams": [
+      "<owner-team>",
+      "<owner-team-2>"
+    ],
+    "_ownership_note": "Auto-approve applies only to PRs the user is asked to review: requested_reviewers contains login OR requested_teams intersects owner_teams. Repo-sweep rows never qualify (a sweep row is not a request — it may come from teams the user is not in).",
+    "docs_exclude_globs": [
+      "dbt/**/*.md",
+      "**/dbt/**/*.md",
+      "packages.txt",
+      "**/packages.txt",
+      "constraints.txt",
+      "**/constraints.txt",
+      "requirements*.txt",
+      "**/requirements*.txt"
+    ]
+  },
+  "bundle_max_files": 60,
+  "bundle_max_kb": 200,
+  "submitted_retention_days": 14
+}

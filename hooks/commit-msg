@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Versioned commit-msg hook for the kit repo (installed with hooks/pre-push via core.hooksPath by
+# setup.sh / sync.sh): every kit commit follows the repo's commit style — Conventional Commits by
+# default, resolved by context-db/bin/commit_style.py (repo marker → env config → default).
+# Other repos opt in with `git config core.hooksPath <abs>/.claude/hooks` — or rely on the same
+# check in sign-queue/enqueue.sh and the pr-open checklist. KIT_SKIP_COMMIT_STYLE=1 bypasses once.
+set -u
+[ "${KIT_SKIP_COMMIT_STYLE:-0}" = "1" ] && exit 0
+here=$(cd "$(dirname "$0")" && pwd)
+checker="$here/../context-db/bin/commit_style.py"
+[ -f "$checker" ] || exit 0            # hook copied somewhere without the kit: nothing to check with
+top=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+if ! python3 "$checker" check --quiet --dir "$top" "$1"; then
+  echo "commit refused — fix the subject (or KIT_SKIP_COMMIT_STYLE=1 for a deliberate one-off)" >&2
+  exit 1
+fi

@@ -1,0 +1,6 @@
+{
+  "system": "dbt",
+  "requires": "dbt",
+  "note": "no store facts yet: no unit declares one (dbt-sqlfluff-fixes runs without a dbt connection); a fact arrives with the unit that reads it",
+  "facts": []
+}

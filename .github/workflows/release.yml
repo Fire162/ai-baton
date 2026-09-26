@@ -1,0 +1,57 @@
+name: release
+
+# The CI half of a kit release (docs/contributing.md § Releases). On every push to main: when the pushed commit
+# is a squash-merged `chore(release): X.Y.Z`, check VERSION agrees, tag that commit vX.Y.Z and publish a
+# GitHub Release whose notes are the version's CHANGELOG.md section. Any other commit: a no-op.
+# Inline rather than conventional-release's reusable tag.yml. Stays on the self-hosted runner: it runs only on a push
+# to main, i.e. code that was already merged — never a pull request's (docs/contributing.md § Where CI runs; #120).
+# Nothing is published as a package — the kit is no library.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: tag
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 10
+    permissions:
+      contents: write  # push the tag, create the release
+    env:
+      TOOL: conventional-release>=0.2,<1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0  # detect needs the tags
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - id: detect
+        name: Is this a release commit?
+        run: uvx --from "$TOOL" conventional-release detect --github-output
+
+      - name: Tag the release commit
+        if: steps.detect.outputs.released == 'true'
+        env:
+          VERSION: ${{ steps.detect.outputs.version }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          uvx --from "$TOOL" conventional-release tag "$VERSION" --push
+
+      - name: GitHub Release
+        if: steps.detect.outputs.released == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.detect.outputs.version }}
+          TAG: ${{ steps.detect.outputs.tag }}
+        run: |
+          uvx --from "$TOOL" conventional-release notes "$VERSION" > "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag

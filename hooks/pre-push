@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# pre-push — the kit repo's `main` is PR-only. This hook refuses every push that would update
+# refs/heads/main on the remote (plain `git push`, `push origin HEAD:main`, forced, or a delete).
+# Pushes of any other branch pass, so the flow is: branch in a worktree → push the branch →
+# open a PR (`pr-open` skill) → merge on GitHub → `make claude_sync` fast-forwards `.claude/`.
+#
+# Installed on every machine by setup.sh and sync.sh (`git config core.hooksPath <kit>/hooks`);
+# GitHub cannot enforce this on a private repo without a paid plan, so the guard is local.
+# Deliberate override for one push: KIT_ALLOW_MAIN_PUSH=1 git push …
+set -u
+[ "${KIT_ALLOW_MAIN_PUSH:-0}" = 1 ] && exit 0
+remote="${1:-origin}"
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  if [ "$remote_ref" = "refs/heads/main" ]; then
+    printf 'pre-push: refused — %s/main of the kit repo is PR-only.\n' "$remote" >&2
+    printf '          Push your branch and open a PR (pr-open skill); merge on GitHub; `make claude_sync` pulls it.\n' >&2
+    printf '          One-off override (you know why): KIT_ALLOW_MAIN_PUSH=1 git push …\n' >&2
+    exit 1
+  fi
+done
+exit 0

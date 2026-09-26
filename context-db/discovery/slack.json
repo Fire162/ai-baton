@@ -1,0 +1,50 @@
+{
+  "system": "slack",
+  "requires": "slack",
+  "facts": [
+    {
+      "key": "slack.domain",
+      "target": "config",
+      "tool": "slack_search_channels",
+      "args": {
+        "query": "general"
+      },
+      "verify": "every result's permalink host is <domain>.slack.com — take the host's first label",
+      "ttl_days": 0,
+      "purpose": "workspace subdomain used in message links"
+    },
+    {
+      "key": "slack.channel",
+      "target": "row",
+      "tool": "slack_search_channels",
+      "args": {
+        "query": "{name}"
+      },
+      "verify": "slack_read_channel on the id answers and the returned channel name equals {name} (archived = reject)",
+      "ttl_days": 365,
+      "purpose": "channel id by handle",
+      "note": "exact-name match first; several partial matches → ask the user once with the candidates"
+    },
+    {
+      "key": "slack.review-venue",
+      "target": "row",
+      "tool": "slack_list_user_channels",
+      "args": {},
+      "verify": "the picked channel is in the user's channel list (a draft only lands where the user is a member) and its id resolves via slack.channel",
+      "ttl_days": 180,
+      "purpose": "primary review-request channel for <owner/repo>",
+      "note": "value = the slack.channel handle, not the id; the pick (which team reviews the repo) is the pr-open skill's call — ask once when unsure"
+    },
+    {
+      "key": "slack.user",
+      "target": "row",
+      "tool": "slack_search_users",
+      "args": {
+        "query": "{name}"
+      },
+      "verify": "slack_read_user_profile on the id shows the expected display name and the account is active",
+      "ttl_days": 365,
+      "purpose": "member id for cc mentions"
+    }
+  ]
+}

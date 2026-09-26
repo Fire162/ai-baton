@@ -1,0 +1,369 @@
+#!/usr/bin/env python3
+"""session_stats.py — "stats for geeks" about ONE Claude Code session, from its transcript.
+
+Reads the session's JSONL transcript (~/.claude/projects/<project>/<session-id>.jsonl — every
+API request's `usage` block lives there) and derives cost + activity figures with no model
+turn at all: turns, cached-prefix tokens, output tokens, peak/avg context, a rough list-price
+spend, tool-call mix, compactions, subagents, and what the session did to the outside world
+(PRs touched/opened, tickets touched/created/commented/transitioned, sign jobs enqueued,
+Slack drafts/sends, pr-watch monitors armed).
+
+Used by session.py (registry `stats:` field on every register/touch/end, `## Session stats`
+block + ledger row on `end`) and by heartbeat.sh (so a LIVE session's row carries current
+figures). Also a CLI:
+
+    session_stats.py [--session-id <uuid>] [--format line|block|json]
+
+The session id defaults to $CLAUDE_CODE_SESSION_ID (set inside every Claude Code session and
+inherited by the detached heartbeat). Missing id or transcript => exit 3, empty output; callers
+treat that as "no stats", never as an error.
+
+Spend is a LIST-PRICE ESTIMATE priced per API request by the model that served it: Sonnet
+3/3.75/0.3/15, Haiku 1/1.25/0.1/5, everything else (Opus, Fable/Mythos) at the Opus-class default
+15/18.75/1.5/75 $/Mtok (in/cache_write/cache_read/out) — override the default with
+SESSION_STATS_PRICES="in,cw,cr,out". Subagents are billed too: every Agent/fork child writes its
+own transcript under <project>/<session-id>/subagents/*.jsonl, and those are summed into
+`subagents_cost` and `spend_total_usd_est` (main + subagents). Before 2026-09-22 the figure was
+main-session only; this session's review-runners alone cost ~3.4x the main prefix, so the total
+is the number to quote. Discounts/batch are ignored. Stdlib only.
+"""
+from __future__ import annotations
+import argparse
+import json
+import os
+import re
+import sys
+from collections import Counter
+from datetime import datetime, timezone
+
+import kit_profile as profile  # same dir — tracker regex, MCP tool names, tz default from the active profile
+import transcripts  # same dir — the shared transcript reader (usage de-dup, subagent dirs)
+
+# Transcript timestamps are UTC; the "Window" row is rendered in the owner's local
+# zone so a session's stats block reads against their wall clock.
+LOCAL_TZ, LOCAL_TZ_NOTE = profile.zone()  # UTC + a note on the Window row when WORKSPACE_TZ is unknown (one stderr line, in kit_profile)
+
+
+def _local_str(iso_utc: str) -> str:
+    if not iso_utc:
+        return iso_utc
+    try:
+        t = datetime.strptime(iso_utc, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return iso_utc
+    return t.astimezone(LOCAL_TZ).strftime("%Y-%m-%d %I:%M %p %Z")
+
+DEFAULT_PRICES = (15.0, 18.75, 1.5, 75.0)  # $/Mtok: input, cache write, cache read, output
+# (model-id substring, prices) — first match wins; anything else (opus, fable, mythos, unknown) = default
+MODEL_PRICES = (
+    ("haiku", (1.0, 1.25, 0.1, 5.0)),
+    ("sonnet", (3.0, 3.75, 0.3, 15.0)),
+)
+
+
+def prices() -> tuple[float, float, float, float]:
+    raw = os.environ.get("SESSION_STATS_PRICES", "")
+    if raw:
+        try:
+            p = tuple(float(x) for x in raw.split(","))
+            if len(p) == 4:
+                return p  # type: ignore[return-value]
+        except ValueError:
+            pass
+    return DEFAULT_PRICES
+
+
+def price_for(model: str | None) -> tuple[float, float, float, float]:
+    m = (model or "").lower()
+    for key, p in MODEL_PRICES:
+        if key in m:
+            return p
+    return prices()
+
+
+def _cost(u: dict, model: str | None) -> float:
+    p_in, p_cw, p_cr, p_out = price_for(model)
+    return ((u.get("input_tokens") or 0) * p_in + (u.get("cache_creation_input_tokens") or 0) * p_cw
+            + (u.get("cache_read_input_tokens") or 0) * p_cr + (u.get("output_tokens") or 0) * p_out) / 1e6
+
+
+def subagent_dir(path: str) -> str:
+    """<project>/<session-id>/subagents/ — one JSONL per Agent/fork child of this session."""
+    return transcripts.subagent_dir(path)
+
+
+def collect_subagents(path: str) -> dict:
+    """Sum usage over every subagent transcript of the session (deduped per API request, priced
+    per model). Cheap: usage lines only, no tool-call parsing."""
+    files = transcripts.subagent_files(path)
+    seen: set[str] = set()
+    tok = {"input": 0, "cache_write": 0, "cache_read": 0, "output": 0}
+    models: Counter = Counter()
+    spend = 0.0
+    turns = 0
+    for fp in files:
+        for _o, m, u, _rid in transcripts.usage_records(fp, seen):
+            turns += 1
+            i, cw, cr, out = transcripts.tokens(u)
+            tok["input"] += i
+            tok["cache_write"] += cw
+            tok["cache_read"] += cr
+            tok["output"] += out
+            spend += _cost(u, m.get("model"))
+            if m.get("model"):
+                models[m["model"]] += 1
+    return {"files": len(files), "turns": turns, "tokens": tok, "spend_usd_est": round(spend, 2), "models": dict(models)}
+
+
+def find_transcript(session_id: str) -> str | None:
+    return transcripts.find_transcript(session_id)
+
+
+def _ts(s: str | None):
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+# Ticket keys look different per tracker (Jira `KEY-1698` vs GitHub `#162`); the env config's
+# config carries the regex (one capture group). No regex → nothing counts as a ticket.
+TICKET_RE = re.compile(profile.get("tracker.key_regex") or r"(?!x)x")
+
+
+def _ticket_key(k: str) -> tuple:
+    """Natural sort for any tracker: `KEY-1698` → ('KEY', 1698); `162` / `#162` → ('', 162)."""
+    m = re.match(r"^#?([A-Za-z]*)-?(\d+)$", k)
+    return (m.group(1), int(m.group(2))) if m else (k, 0)
+# MCP tool-name suffixes that count as tracker writes (create / comment / transition); Jira only today.
+_T = profile.get("tracker.mcp_tools") or {}
+TRACKER_CREATE, TRACKER_COMMENT, TRACKER_TRANSITION = (_T.get(k) or None for k in ("create", "comment", "transition"))
+PR_RE = re.compile(r"github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)")
+GH_WRITE_RE = re.compile(r"gh api\b[^|;\n]*-X\s+(POST|PATCH|PUT|DELETE)|gh pr (create|merge|ready|edit|review|comment|close)")
+# a real enqueue: `enqueue.sh <topic> /abs/worktree …` — not `cat enqueue.sh` or a mention in a comment
+ENQUEUE_RE = re.compile(r"enqueue\.sh\s+[a-z0-9][A-Za-z0-9._-]*\s+[/$\"']")
+PR_CREATE_RE = re.compile(r"(^|[;&|]\s*)gh pr create\b", re.M)
+
+
+def collect(path: str) -> dict:
+    """One pass over the transcript. Usage is deduped per API request (a message with several
+    content blocks is written as several assistant lines that repeat the same usage)."""
+    seen_req: set[str] = set()
+    n_turns = 0
+    tok_in = tok_cw = tok_cr = tok_out = tok_think = 0
+    peak_ctx = 0
+    ctx_sum = 0
+    tools: Counter = Counter()
+    models: Counter = Counter()
+    compactions = 0
+    api_errors = 0
+    prompts = 0
+    first_ts = last_ts = None
+    prs_touched: set[tuple[str, str]] = set()
+    prs_opened = 0
+    tickets: set[str] = set()
+    jira_created = jira_comments = jira_transitions = 0
+    sign_jobs = 0
+    slack_drafts = slack_sends = 0
+    monitors = 0
+    gh_writes = 0
+    subagents = 0
+    spend = 0.0
+
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            try:
+                o = json.loads(line)
+            except ValueError:
+                continue
+            t = o.get("type")
+            ts = _ts(o.get("timestamp"))
+            if ts:
+                first_ts = first_ts or ts
+                last_ts = ts
+            if o.get("isCompactSummary"):
+                compactions += 1
+            if o.get("isApiErrorMessage"):
+                api_errors += 1
+            if t == "pr-link":
+                if o.get("prRepository") and o.get("prNumber"):
+                    prs_touched.add((str(o["prRepository"]), str(o["prNumber"])))
+                continue
+            m = o.get("message") or {}
+            if t == "user":
+                c = m.get("content")
+                text = c if isinstance(c, str) else " ".join(
+                    b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text"
+                ) if isinstance(c, list) else ""
+                has_result = isinstance(c, list) and any(
+                    isinstance(b, dict) and b.get("type") == "tool_result" for b in c
+                )
+                if text and not has_result and not o.get("isMeta") and not text.lstrip().startswith(("<", "[SYSTEM")):
+                    prompts += 1
+                continue
+            if t != "assistant":
+                continue
+            rid = o.get("requestId") or m.get("id")
+            u = m.get("usage") or {}
+            if rid and rid not in seen_req and u:
+                seen_req.add(rid)
+                n_turns += 1
+                i, cw, cr, out = transcripts.tokens(u)
+                tok_in += i; tok_cw += cw; tok_cr += cr; tok_out += out
+                spend += _cost(u, m.get("model"))
+                tok_think += (u.get("output_tokens_details") or {}).get("thinking_tokens") or 0
+                ctx = i + cw + cr
+                ctx_sum += ctx
+                peak_ctx = max(peak_ctx, ctx)
+                if m.get("model"):
+                    models[m["model"]] += 1
+            for b in m.get("content") or []:
+                if not isinstance(b, dict) or b.get("type") != "tool_use":
+                    continue
+                name = b.get("name", "?")
+                tools[name] += 1
+                inp = b.get("input") or {}
+                blob = json.dumps(inp, ensure_ascii=False)
+                for repo, num in PR_RE.findall(blob):
+                    prs_touched.add((repo, num))
+                tickets.update(TICKET_RE.findall(blob))
+                if name == "Agent":
+                    subagents += 1
+                elif name == "Monitor":
+                    if "pr-watch" in inp.get("command", ""):
+                        monitors += 1
+                elif name == "Bash":
+                    cmd = inp.get("command", "")
+                    if ENQUEUE_RE.search(cmd):
+                        sign_jobs += 1
+                    if PR_CREATE_RE.search(cmd):
+                        prs_opened += 1
+                    if GH_WRITE_RE.search(cmd):
+                        gh_writes += 1
+                elif TRACKER_CREATE and name.endswith(TRACKER_CREATE):
+                    jira_created += 1
+                elif TRACKER_COMMENT and name.endswith(TRACKER_COMMENT):
+                    jira_comments += 1
+                elif TRACKER_TRANSITION and name.endswith(TRACKER_TRANSITION):
+                    jira_transitions += 1
+                elif name.endswith("slack_send_message_draft"):
+                    slack_drafts += 1
+                elif name.endswith("slack_send_message"):
+                    slack_sends += 1
+
+    p_in, p_cw, p_cr, p_out = prices()
+    sub = collect_subagents(path)
+    hours = ((last_ts - first_ts).total_seconds() / 3600.0) if first_ts and last_ts else 0.0
+    return {
+        "session_id": os.path.splitext(os.path.basename(path))[0],
+        "transcript": path,
+        "started": first_ts.strftime("%Y-%m-%dT%H:%M:%SZ") if first_ts else "",
+        "last": last_ts.strftime("%Y-%m-%dT%H:%M:%SZ") if last_ts else "",
+        "wall_hours": round(hours, 1),
+        "turns": n_turns,
+        "prompts": prompts,
+        "tokens": {"input": tok_in, "cache_write": tok_cw, "cache_read": tok_cr,
+                   "output": tok_out, "thinking": tok_think},
+        "context": {"peak": peak_ctx, "avg": int(ctx_sum / n_turns) if n_turns else 0},
+        "spend_usd_est": round(spend, 2),
+        "subagents_cost": sub,
+        "spend_total_usd_est": round(spend + sub["spend_usd_est"], 2),
+        "prices_per_mtok": {"input": p_in, "cache_write": p_cw, "cache_read": p_cr, "output": p_out},
+        "compactions": compactions,
+        "api_errors": api_errors,
+        "models": dict(models),
+        "tool_calls": sum(tools.values()),
+        "tools_top": [(n.replace("mcp__claude_ai_", ""), c) for n, c in tools.most_common(8)],
+        "subagents": subagents,
+        "monitors_armed": monitors,
+        "prs_touched": sorted(prs_touched),
+        "prs_opened": prs_opened,
+        "gh_writes": gh_writes,
+        "tickets_touched": sorted(tickets, key=_ticket_key),
+        "jira": {"created": jira_created, "comments": jira_comments, "transitions": jira_transitions},
+        "sign_jobs": sign_jobs,
+        "slack": {"drafts": slack_drafts, "sends": slack_sends},
+    }
+
+
+def _k(n: int) -> str:
+    if n >= 1_000_000:
+        return f"{n / 1e6:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1e3:.0f}k"
+    return str(n)
+
+
+def fmt_line(s: dict) -> str:
+    """One registry-cell line (no `|`, no newlines)."""
+    tk = s["tokens"]
+    return (f"{s['turns']} turns · {s['wall_hours']}h · ctx peak {_k(s['context']['peak'])} avg {_k(s['context']['avg'])} · "
+            f"cache-read {_k(tk['cache_read'])} · out {_k(tk['output'])} · "
+            f"~${s['spend_total_usd_est']:.0f} (main {s['spend_usd_est']:.0f} + {s['subagents_cost']['files']} subagents {s['subagents_cost']['spend_usd_est']:.0f}) · "
+            f"{s['compactions']} compactions · {s['tool_calls']} tool calls · "
+            f"{len(s['prs_touched'])} PRs ({s['prs_opened']} opened) · {len(s['tickets_touched'])} tickets "
+            f"({s['jira']['created']} created, {s['jira']['comments']} comments, {s['jira']['transitions']} transitions) · "
+            f"{s['sign_jobs']} sign jobs · {s['slack']['drafts']} Slack drafts")
+
+
+def fmt_block(s: dict) -> str:
+    """Markdown table for a session file / context doc."""
+    tk, ctx, j, p, sub = s["tokens"], s["context"], s["jira"], s["prices_per_mtok"], s["subagents_cost"]
+    stk = sub["tokens"]
+    sub_models = ", ".join(f"{m.replace('claude-', '')} {c}" for m, c in sorted(sub["models"].items(), key=lambda x: -x[1])) or "—"
+    prs = ", ".join(f"{r.split('/')[-1]}#{n}" for r, n in s["prs_touched"]) or "—"
+    tickets = ", ".join(s["tickets_touched"]) or "—"
+    tools = ", ".join(f"{n} {c}" for n, c in s["tools_top"]) or "—"
+    rows = [
+        ("Window", f"{_local_str(s['started'])} → {_local_str(s['last'])} ({s['wall_hours']}h){LOCAL_TZ_NOTE}"),
+        ("Turns / prompts", f"{s['turns']} API turns · {s['prompts']} user prompts · {s['compactions']} compactions · {s['api_errors']} API errors"),
+        ("Context", f"peak {_k(ctx['peak'])} · avg prefix {_k(ctx['avg'])}"),
+        ("Tokens", f"cache-read {_k(tk['cache_read'])} · cache-write {_k(tk['cache_write'])} · uncached in {_k(tk['input'])} · out {_k(tk['output'])} (thinking {_k(tk['thinking'])})"),
+        ("Rough spend", f"~${s['spend_total_usd_est']:.2f} TOTAL = main ~${s['spend_usd_est']:.2f} + subagents ~${sub['spend_usd_est']:.2f} — list price per model (opus-class default ${p['input']}/{p['cache_write']}/{p['cache_read']}/{p['output']} per Mtok in/cache-write/cache-read/out; sonnet 3/3.75/0.3/15; haiku 1/1.25/0.1/5)"),
+        ("Subagents", f"{sub['files']} transcripts · {sub['turns']} API turns · cache-read {_k(stk['cache_read'])} · cache-write {_k(stk['cache_write'])} · out {_k(stk['output'])} · models: {sub_models}"),
+        ("Tool calls", f"{s['tool_calls']} — {tools}"),
+        ("Delegation", f"{s['subagents']} Agent calls · {s['monitors_armed']} pr-watch Monitor arms (incl. 30-min re-arms)"),
+        ("PRs", f"{len(s['prs_touched'])} referenced · {s['prs_opened']} `gh pr create` calls · {s['gh_writes']} GitHub writes: {prs}"),
+        ("Tickets", f"{len(s['tickets_touched'])} referenced · {j['created']} created · {j['comments']} comments · {j['transitions']} transitions: {tickets}"),
+        ("Hand-offs", f"{s['sign_jobs']} sign-queue jobs · {s['slack']['drafts']} Slack drafts · {s['slack']['sends']} Slack sends"),
+    ]
+    out = ["| Stat | Value |", "|---|---|"]
+    out += [f"| {k} | {v.replace('|', '/')} |" for k, v in rows]
+    return "\n".join(out)
+
+
+def stats_for(session_id: str | None) -> dict | None:
+    sid = session_id or os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if not sid:
+        return None
+    path = find_transcript(sid)
+    if not path:
+        return None
+    try:
+        return collect(path)
+    except OSError:
+        return None
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--session-id", default="")
+    ap.add_argument("--format", choices=("line", "block", "json"), default="block")
+    a = ap.parse_args()
+    s = stats_for(a.session_id or None)
+    if s is None:
+        print("session_stats: no session id / transcript found (set CLAUDE_CODE_SESSION_ID or --session-id)", file=sys.stderr)
+        return 3
+    if a.format == "json":
+        print(json.dumps(s, indent=2))
+    elif a.format == "line":
+        print(fmt_line(s))
+    else:
+        print(fmt_block(s))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,79 @@
+{
+  "system": "tracker",
+  "when": {
+    "config": "tracker.kind",
+    "equals": "github"
+  },
+  "facts": [
+    {
+      "key": "tracker.repos",
+      "target": "config",
+      "tool": "cli",
+      "args": {
+        "cmd": "gh repo view --json nameWithOwner --jq .nameWithOwner"
+      },
+      "verify": "run in each repo directory of the workspace that has issues enabled (`gh repo view --json hasIssuesEnabled`)",
+      "ttl_days": 0,
+      "purpose": "repos whose issues are the tracker"
+    },
+    {
+      "key": "tracker.key_regex",
+      "target": "config",
+      "tool": "derive",
+      "args": {
+        "from": "tracker.repos",
+        "template": "(?:^|[^\\w/])#(\\d+)\\b"
+      },
+      "verify": "re.compile has one group and matches `#123` but not `a/b#123`",
+      "ttl_days": 0,
+      "purpose": "one-group regex that finds issue numbers"
+    },
+    {
+      "key": "tracker.url_template",
+      "target": "config",
+      "tool": "derive",
+      "args": {
+        "from": "tracker.repos",
+        "template": "https://github.com/{repo}/issues/{key}"
+      },
+      "verify": "the rendered URL for a real issue opens it",
+      "ttl_days": 0,
+      "purpose": "issue link template"
+    },
+    {
+      "key": "tracker.milestone",
+      "target": "row",
+      "tool": "cli",
+      "args": {
+        "cmd": "gh api repos/{config.tracker.repos[0]}/milestones --jq '.[] | [.number, .title] | @tsv'"
+      },
+      "verify": "one open milestone whose title equals the handle",
+      "ttl_days": 90,
+      "purpose": "milestone number by title"
+    },
+    {
+      "key": "tracker.close_reasons",
+      "target": "config",
+      "tool": "derive",
+      "args": {
+        "from": "tracker.kind",
+        "template": "{\"done\": \"completed\", \"wont_do\": \"not planned\", \"cancelled\": \"not planned\"}"
+      },
+      "verify": "the exact strings `gh issue close --reason` accepts (`completed`, `not planned`) under the three keys the ticket-close skill reads (done, wont_do, cancelled) — nothing to discover",
+      "ttl_days": 0,
+      "purpose": "close-reason names the ticket-close skill maps to"
+    },
+    {
+      "key": "tracker.query resolved_by_me",
+      "target": "row",
+      "tool": "derive",
+      "args": {
+        "from": "tracker.repos",
+        "template": "assignee:@me is:closed closed:>={since} repo:{repo}"
+      },
+      "verify": "`gh search issues '<query with a real date>' --json number,closedAt` lists the user's closed issues; `{since}` stays in the stored text (cost-report fills it per run), `{repo}` is rendered per tracker.repos entry",
+      "ttl_days": 0,
+      "purpose": "cost-report's \"issues I resolved since <since>\" query in the tracker's language"
+    }
+  ]
+}

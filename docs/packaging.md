@@ -1,0 +1,90 @@
+# Packaging — a plugin at the root, the clone path kept (#118)
+
+**Decision (2026-09-26): both.** The repository root is a Claude Code plugin — `.claude-plugin/plugin.json` +
+`.claude-plugin/marketplace.json`, so the kit is marketplace-installable, `claude plugin validate` / `eval` run
+against it, and `userConfig` can carry identity (#116) — **and** the clone-into-`.claude/` path stays, because the
+things that make it a *workspace* kit are conventions a plugin cannot install: the `.context/` DB beside the
+workspace, the root `CLAUDE.md` imports, the root `Makefile` include, the git hooks and the fast-forward sync.
+
+## Layout map
+
+| in the repo | plugin path (`claude plugin install`) | clone path (`git clone … .claude`) |
+|---|---|---|
+| `skills/<name>/` | plugin skills, invoked as `/ai-baton:<name>` (or `/<name>` when unambiguous) | discovered from `.claude/skills/` |
+| `agents/*.md` | plugin agents | discovered from `.claude/agents/` |
+| `evals/` (arrives with #115; cases per #98) | the default eval dir — `claude plugin eval .`; no manifest key until cases exist | same files, same command |
+| `context-db/` (engine, discovery manifests, templates) | ships inside the plugin root; scripts find the kit from their own location | `.claude/context-db/` |
+| `hooks/` (`pre-push`, `commit-msg`) | **git** hooks, not Claude Code hooks — not a plugin component | installed by `setup.sh` / `sync.sh` (`core.hooksPath`) |
+| `settings.json` (`SessionEnd` → `sync.sh`) | not shipped: the plugin update **is** the sync | the kit's project settings |
+| `setup.sh`, `sync.sh`, `workspace.mk`, `CLAUDE.example.md`, `environment-template/` | not plugin components; run from a clone | the workspace bootstrap |
+| `.context/` (DB, env store, memory, state) | **never in the plugin** — project data, found through `CLAUDE_PROJECT_DIR/.context` | beside `.claude/` |
+| `README.md`, `WORKSPACE.md`, `docs/`, `CONTRIBUTING.md` | carried, not loaded | the same |
+
+**Env store location: one place on both paths.** `.context/reference/env/` next to the workspace — it is *project*
+data (one machine = one environment = one workspace root), not plugin data, so `${CLAUDE_PLUGIN_DATA}` is not used
+for it. `kit_profile.context_root()` resolves `CONTEXT_ROOT`, then the `.context/` beside the kit (clone path, also
+from a worktree), then `CLAUDE_PROJECT_DIR/.context` (plugin path).
+
+**Nothing stateful under the plugin root.** `${CLAUDE_PLUGIN_ROOT}` changes on every update; state is `.context/`
+(or `${CLAUDE_PLUGIN_DATA}` for plugin-private caches, none today). Skills cross-reference each other by name
+(docs/contributing.md § Skills).
+
+## Installing
+
+- **Clone path** (the whole workspace kit, today's complete experience): `README.md` § Install — one command for a
+  GitHub-only machine, the prompt in `docs/new-environment.md` for a corporate one.
+- **Plugin path** (the skills and agents, from the repository as its own marketplace):
+  ```sh
+  claude plugin marketplace add <owner>/ai-baton          # the repo is the marketplace
+  claude plugin install ai-baton@ai-baton-kit    # the plugin entry it lists
+  ```
+  Then, **from the workspace root**, run `sh <plugin root>/setup.sh` once to scaffold `.context/`, the root `CLAUDE.md`
+  and `Makefile` — the conventions the plugin cannot install. Run from a plugin install (a directory not named
+  `.claude/`) the script takes `CLAUDE_PROJECT_DIR`, else the current directory, as the workspace root, and seeds the
+  ignored `settings.local.json` in `<root>/.claude/` (the directory Claude Code reads project settings from) — nothing
+  is written below the plugin cache; `PROJECTS=/path` overrides. Until the skill bodies resolve the engine through
+  `${CLAUDE_PLUGIN_ROOT}` (open item below) a plugin install alone gives the skills whose bodies need no engine
+  script; the full kit still wants the clone.
+
+## Identity (#116)
+
+The user's own values — name, GitHub login, timezone, optional chat DM ids — are the one input the kit needs per
+person. Two sources, one reader:
+
+| path | source | how it reaches a script |
+|---|---|---|
+| plugin | `plugin.json` `userConfig` (`user_name`, `github_login`, `tz`, `slack_self_dm`, `slack_lattice_dm`), asked for by `/plugin configure ai-baton` or `claude plugin install --config key=value`; the chat ids are `sensitive` (masked, secure storage) | Claude Code hands them to hooks as `CLAUDE_PLUGIN_OPTION_<KEY>`; the `hooks/hooks.json` SessionStart hook runs `kit_profile.py identity-env`, which appends `export WORKSPACE_*=…` to `$CLAUDE_ENV_FILE`, so every later Bash command sees them |
+| clone | the `env` block of the ignored `.claude/settings.local.json` (`settings.local.example.json`) | merged into every Bash, hook and subagent environment by Claude Code |
+
+`kit_profile.identity(var)` reads the option first, then the `WORKSPACE_*` variable, so a value typed into `/config`
+wins over a stale file; `kit_profile.py identity-source <var>` says which source answered, never the value.
+Scripts and skill bodies keep reading `$WORKSPACE_*`. `kit-verify` fails when `userConfig` and
+`kit_profile.IDENTITY_KEYS` drift or the hook is missing; `kit-health` scans the option values for leaks like the
+file's, and § 4 names the source of each key. Secrets belong in neither place (docs/contributing.md § Secrets); environment
+facts (channel ids, tracker site, org) stay in the env store, which keeps discovery, TTL and provenance —
+`userConfig` never replaces it.
+
+## Version discipline
+
+`plugin.json` `version` == `VERSION` == the latest `CHANGELOG.md` release section. `kit-verify` fails when the two
+files disagree (every machine, no `claude` CLI needed); `.conventional-release.toml` lists both in `version-files`,
+so a release PR bumps them together. `make -C .claude/context-db plugin-validate` (part of `make ci` and
+`ci.yml`) runs `claude plugin validate --strict` on the manifests, the skills and the agents where the CLI exists.
+
+## Name
+
+The project is **ai-baton** (styled bAIton on the front page): the plugin `ai-baton`, the marketplace `ai-baton-kit`,
+the repository `ai-baton` (#100). The name carries no "Claude" — the kit is *for* Claude Code, not by Anthropic —
+and nothing reserved or impersonating is used. A future rename is a one-line change here plus a `renames` entry in
+`marketplace.json`.
+
+## Open items (follow-ups, not this decision)
+
+- Skill bodies invoke the engine as `python3 .claude/context-db/bin/…` — the clone layout. On the plugin path the
+  same script is `${CLAUDE_PLUGIN_ROOT}/context-db/bin/…`, which Claude Code substitutes only for plugin-loaded
+  skills. A resolver that works on both paths (an env variable the clone path sets too, or a `kit` launcher on
+  `PATH` written by `setup.sh`) is the next packaging PR; until then the clone path is the supported full install.
+- `install.sh` for agents without a marketplace (symlink `skills/` into `~/.claude/skills`) — the clone path already
+  serves them (`~/.claude/skills` shadows `.claude/skills`, so a symlink there is a choice, not a need).
+- Skipped on purpose (amendment on #118): a second agent's manifest pair, a toolchain submodule, a package tap —
+  nothing here ships a binary.

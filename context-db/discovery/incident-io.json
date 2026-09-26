@@ -1,0 +1,6 @@
+{
+  "system": "incident_io",
+  "requires": "incident_io",
+  "note": "no store facts yet: no unit declares one; a fact arrives with the unit that reads it",
+  "facts": []
+}

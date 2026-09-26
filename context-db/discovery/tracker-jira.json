@@ -1,0 +1,124 @@
+{
+  "system": "tracker",
+  "requires": "jira",
+  "when": {
+    "config": "tracker.kind",
+    "equals": "jira"
+  },
+  "facts": [
+    {
+      "key": "tracker.setting site",
+      "target": "row",
+      "tool": "getAccessibleAtlassianResources",
+      "args": {},
+      "verify": "exactly one resource whose url ends in .atlassian.net; several → ask the user which",
+      "ttl_days": 0,
+      "purpose": "Jira site host (https://<site>)"
+    },
+    {
+      "key": "tracker.setting cloud_id",
+      "target": "row",
+      "tool": "getAccessibleAtlassianResources",
+      "args": {},
+      "verify": "the id field of the same resource as tracker.setting site",
+      "ttl_days": 0,
+      "purpose": "cloudId the Atlassian tools take"
+    },
+    {
+      "key": "tracker.setting project",
+      "target": "row",
+      "tool": "getVisibleJiraProjects",
+      "args": {
+        "cloudId": "{row.tracker.setting.cloud_id}",
+        "action": "create"
+      },
+      "verify": "getJiraProjectIssueTypesMetadata for the key answers; several visible projects → ask the user which is the team's",
+      "ttl_days": 0,
+      "purpose": "the team's project key"
+    },
+    {
+      "key": "tracker.setting board_sprint_prefix",
+      "target": "row",
+      "tool": "user",
+      "args": {},
+      "verify": "a sprint on the team's board is named `<prefix> Sprint n`",
+      "ttl_days": 0,
+      "purpose": "sprint-name prefix that tells the team's sprints apart from other boards' on the same field"
+    },
+    {
+      "key": "tracker.key_regex",
+      "target": "config",
+      "tool": "derive",
+      "args": {
+        "from": "tracker.setting project",
+        "template": "\\b({project}-\\d+)\\b"
+      },
+      "verify": "re.compile has one group and matches a real key of the project",
+      "ttl_days": 0,
+      "purpose": "one-group regex that finds ticket keys in text"
+    },
+    {
+      "key": "tracker.url_template",
+      "target": "config",
+      "tool": "derive",
+      "args": {
+        "from": "tracker.setting site",
+        "template": "{site}/browse/{key}"
+      },
+      "verify": "the rendered URL for a real key opens the issue",
+      "ttl_days": 0,
+      "purpose": "ticket link template"
+    },
+    {
+      "key": "tracker.field",
+      "target": "row",
+      "tool": "getJiraIssueTypeMetaWithFields",
+      "args": {
+        "cloudId": "{row.tracker.setting.cloud_id}",
+        "projectIdOrKey": "{row.tracker.setting.project}",
+        "issueTypeId": "<the Task issue type id from getJiraProjectIssueTypesMetadata>"
+      },
+      "verify": "one field whose name equals the handle case-insensitively (sprint → `Sprint`, unplanned → `Unplanned`); its fieldId is customfield_<n>",
+      "ttl_days": 365,
+      "purpose": "custom-field id by handle"
+    },
+    {
+      "key": "tracker.transition",
+      "target": "row",
+      "tool": "getTransitionsForJiraIssue",
+      "args": {
+        "cloudId": "{row.tracker.setting.cloud_id}",
+        "issueIdOrKey": "<any open issue of the project>"
+      },
+      "verify": "one transition whose name equals the handle case-insensitively; the id is numeric",
+      "ttl_days": 180,
+      "purpose": "workflow transition id by name",
+      "note": "transitions differ per status — the plan lists what is reachable from the probe issue's status; probe from To Do for the common set"
+    },
+    {
+      "key": "tracker.user",
+      "target": "row",
+      "tool": "lookupJiraAccountId",
+      "args": {
+        "cloudId": "{row.tracker.setting.cloud_id}",
+        "searchString": "{name}"
+      },
+      "verify": "exactly one active account whose display name matches; the value is the accountId",
+      "ttl_days": 365,
+      "purpose": "account id for ADF mentions"
+    },
+    {
+      "key": "tracker.query resolved_by_me",
+      "target": "row",
+      "tool": "derive",
+      "args": {
+        "from": "tracker.kind",
+        "template": "assignee was currentUser() AND resolved >= \"{since}\" ORDER BY resolved ASC"
+      },
+      "verify": "searchJiraIssuesUsingJql with `{since}` replaced by a real date returns the user's resolved issues oldest first; `{since}` itself stays in the stored text (cost-report fills it per run)",
+      "ttl_days": 0,
+      "purpose": "cost-report's \"issues I resolved since <since>\" query in the tracker's language",
+      "note": "record a field-selection trap you hit (parent dropped when many fields are requested, pagination shape) in --purpose, not in the query"
+    }
+  ]
+}

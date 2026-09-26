@@ -1,0 +1,16 @@
+{
+  "name": "ai-baton-kit",
+  "description": "The Claude Code workspace kit, installable as a plugin from its own repository.",
+  "owner": {
+    "name": "ai-baton maintainers",
+    "url": "https://github.com/MdaaaaO/ai-baton"
+  },
+  "plugins": [
+    {
+      "name": "ai-baton",
+      "source": "./",
+      "description": "Capability-gated skills and agents, the env fact store, the context DB engine and kit-health.",
+      "category": "productivity"
+    }
+  ]
+}

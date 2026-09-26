@@ -1,0 +1,128 @@
+name: ci
+
+# The kit has no build — "CI" is the checks a kit change must pass before any machine pulls it:
+# the env-free validator passes on the bare checkout, every skill/agent carries its versioning frontmatter
+# against a blank env store (kit_verify.py), the engine's unittest suite
+# passes (context-db/tests/), every Python file
+# compiles, every shell script parses. Stdlib only, so nothing is installed. `make -C .claude/context-db ci`
+# reproduces it locally.
+#
+# Runs on GitHub-hosted runners (docs/contributing.md § Where CI runs): a job triggered by a pull request executes the
+# PR's code, and a fork's PR may come from anyone once the repo is public — so PR-triggered jobs never run on the
+# self-hosted runner (GitHub's hardening guide; #120). A fork's PR runs here without secrets, which is all these
+# checks need.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kit-verify:
+    name: kit-verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # The kit lives at <workspace>/.claude and finds the env store at <workspace>/.context, so
+      # check it out one level down and give it a blank store — the same shape setup.sh builds.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: .claude
+          fetch-depth: 0  # the review gate diffs against the base branch
+
+      # Tier 0 of the review (#121, docs/REVIEW.md § 1): what a diff against the base decides without a model — leak
+      # shapes on every added line, a version + `updated` bump and a CHANGELOG line for every changed skill/agent. The
+      # bump check is skipped for a PR the author marks wording-only (`wording` label, or `[skip-bump]` in the title or
+      # body) — the claim stays visible on the PR for the reviewer to question.
+      - name: Review gate (tier 0 — leak shapes, bumps)
+        if: github.event_name == 'pull_request'
+        working-directory: .claude
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          SKIP_BUMP: ${{ contains(github.event.pull_request.labels.*.name, 'wording') || contains(github.event.pull_request.title, '[skip-bump]') || contains(github.event.pull_request.body, '[skip-bump]') }}
+        run: |
+          git fetch -q --no-tags origin "$BASE_REF"
+          set -- --base "origin/$BASE_REF" --head HEAD
+          [ "$SKIP_BUMP" = "true" ] && set -- "$@" --skip-bump
+          python3 context-db/bin/review_gate.py "$@"
+
+      # The environment-free validator (#114): the check a contributor runs on a bare clone
+      # (`make -C .claude/context-db verify-skill`) — frontmatter schema, body, leak shapes. `--no-env` reads no
+      # store, so a previous run's .context left on a persistent runner changes nothing here.
+      - name: Env-free validator (kit-verify --no-env)
+        run: make -C .claude/context-db verify-skill
+
+      - name: Blank env store (environment "ci")
+        run: |
+          rm -rf .context
+          python3 .claude/context-db/bin/kb.py init --blank
+          python3 .claude/context-db/bin/kb.py config-set environment ci
+
+      - name: Skills and agents carry versioning frontmatter
+        run: make -C .claude/context-db kit-verify
+
+      # kit-health's leak scan against the blank store (#81 A31): the shapes plus whatever a store carries — here
+      # nothing — over every kit file; CI mode writes nothing under .context/ and fails on an error or a leak hit.
+      - name: kit-health --ci (leak scan, no writes)
+        run: python3 .claude/skills/kit-health/kit-health.py --ci --quiet
+
+      - name: Engine tests
+        run: make -C .claude/context-db test
+
+      # The plugin manifests (#118) through Claude Code's own validator. A hosted runner has no `claude` CLI, and the
+      # Makefile target skips silently without one — so install it first (no account needed to validate); a failed
+      # install fails the step rather than dropping the check. Pinned like every other CI dependency; bump on purpose.
+      - name: Install the Claude Code CLI
+        env:
+          CLAUDE_CODE_VERSION: 2.1.283
+        run: npm install -g "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION" >/dev/null && claude --version
+      - name: Plugin manifests validate
+        run: make -C .claude/context-db plugin-validate
+
+      - name: Python compiles
+        working-directory: .claude
+        run: git ls-files -z '*.py' | xargs -0 -r python3 -m py_compile
+
+      - name: Shell scripts parse
+        working-directory: .claude
+        run: |
+          rc=0
+          while IFS= read -r -d '' f; do
+            bash -n "$f" || { echo "::error file=$f::bash -n failed"; rc=1; }
+          done < <(git ls-files -z '*.sh' hooks/ ':!hooks/*.json')  # hooks.json is the plugin's hook manifest, not a script
+          exit $rc
+
+      # setup.sh / sync.sh run under `sh` (dash on most hosts) at every session end: a bashism passes `bash -n` and
+      # breaks every machine (#81 A04), so every `#!/bin/sh` script is parsed by dash too.
+      - name: POSIX scripts parse under dash
+        working-directory: .claude
+        run: |
+          rc=0
+          for f in $(git ls-files '*.sh'); do
+            head -1 "$f" | grep -q '^#!/bin/sh' || continue
+            if command -v dash >/dev/null 2>&1; then dash -n "$f" || { echo "::error file=$f::dash -n failed"; rc=1; }
+            else sh -n "$f" || { echo "::error file=$f::sh -n failed"; rc=1; }; fi
+          done
+          exit $rc
+
+      # shellcheck -S warning (#81 A05): the system binary where the runner has one, else the PyPI wheel through uvx
+      # (the runner has uv for pr-title/release); fixtures are test data.
+      - name: shellcheck
+        working-directory: .claude
+        run: |
+          files="$(git ls-files '*.sh' | grep -v /fixtures/) hooks/pre-push hooks/commit-msg"
+          if command -v shellcheck >/dev/null 2>&1; then shellcheck -S warning $files
+          elif command -v uvx >/dev/null 2>&1; then uvx --from shellcheck-py shellcheck -S warning $files
+          else echo "::error::neither shellcheck nor uvx on this runner"; exit 1; fi
+
+      # every relative Markdown link in the kit resolves (#81 A30)
+      - name: Markdown links resolve
+        working-directory: .claude
+        run: python3 context-db/bin/check_links.py

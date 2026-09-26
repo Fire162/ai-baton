@@ -1,0 +1,342 @@
+<title>{{TITLE}}</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,600;1,400&display=swap">
+<style>
+:root{
+  --ground:#F4F6F4; --surface:#FFFFFF; --sunk:#ECEFEC;
+  --ink:#191F1C; --body:#2C3733; --muted:#5E6E68; --faint:#8B9A94;
+  --rule:#DCE2DE; --rule-strong:#C4CEC9;
+  --owed:#A8661A; --owed-soft:#F6EBDC;
+  --done:#2C6A5D; --done-soft:#E2EFEB;
+  --focus:#1F6FB2;
+  --shadow:0 1px 2px rgba(25,31,28,.05), 0 8px 24px -16px rgba(25,31,28,.35);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#111614; --surface:#19201D; --sunk:#141A18;
+    --ink:#E7EDE9; --body:#CBD5D0; --muted:#8B9A94; --faint:#6D7C76;
+    --rule:#28302C; --rule-strong:#36403B;
+    --owed:#D9A050; --owed-soft:#2A2118;
+    --done:#5DAD98; --done-soft:#152420;
+    --focus:#6FB3E8;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#111614; --surface:#19201D; --sunk:#141A18;
+  --ink:#E7EDE9; --body:#CBD5D0; --muted:#8B9A94; --faint:#6D7C76;
+  --rule:#28302C; --rule-strong:#36403B;
+  --owed:#D9A050; --owed-soft:#2A2118;
+  --done:#5DAD98; --done-soft:#152420;
+  --focus:#6FB3E8;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--ground); color:var(--body);
+  font-family:"IBM Plex Serif",Georgia,"Times New Roman",serif;
+  font-size:15px; line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:860px; margin:0 auto; padding-inline:20px; padding-block:0 72px}
+
+/* ---------- masthead ---------- */
+.mast{padding-block:44px 22px; border-bottom:2px solid var(--ink)}
+.eyebrow{
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:11px; font-weight:500;
+  letter-spacing:.14em; text-transform:uppercase; color:var(--muted); margin:0 0 12px
+}
+h1{
+  font-family:"IBM Plex Sans Condensed",Arial Narrow,system-ui,sans-serif;
+  font-weight:700; font-size:clamp(34px,7vw,52px); line-height:1.02; letter-spacing:-.015em;
+  color:var(--ink); margin:0; text-wrap:balance;
+}
+.standfirst{margin:14px 0 0; max-width:60ch; color:var(--body)}
+.standfirst em{font-style:italic; color:var(--ink)}
+.mast-meta{
+  display:flex; flex-wrap:wrap; gap:10px 22px; align-items:baseline; margin-top:20px;
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:12px; color:var(--muted);
+}
+.mast-meta b{color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums}
+.mast-meta a{color:var(--focus)}
+
+/* ---------- rail ---------- */
+.rail{
+  position:sticky; top:0; z-index:5; background:var(--ground);
+  border-bottom:1px solid var(--rule); margin-bottom:8px;
+  padding-block:10px;
+}
+.rail-inner{display:flex; flex-wrap:wrap; gap:6px; align-items:center}
+.rail-label{
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:10px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--faint); margin-right:4px;
+}
+.chip{
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:12px; font-weight:500;
+  color:var(--owed); background:var(--owed-soft); border:1px solid transparent;
+  padding:4px 9px; border-radius:2px; text-decoration:none; display:inline-flex; gap:5px;
+  align-items:center; font-variant-numeric:tabular-nums;
+}
+.chip:hover{border-color:var(--owed)}
+.chip[data-filled="1"]{color:var(--done); background:var(--done-soft)}
+.chip[data-filled="1"]::after{content:"✓"}
+.tally{
+  margin-left:auto; font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:12px;
+  color:var(--muted); font-variant-numeric:tabular-nums; padding-left:8px;
+}
+.tally b{color:var(--ink); font-weight:600}
+
+/* ---------- entries ---------- */
+.entries{display:flex; flex-direction:column; gap:22px; margin-top:22px}
+.entry{
+  background:var(--surface); border:1px solid var(--rule); border-left:3px solid var(--owed);
+  box-shadow:var(--shadow); scroll-margin-top:74px;
+}
+.entry[data-filled="1"]{border-left-color:var(--done)}
+.entry-head{
+  display:grid; grid-template-columns:auto 1fr; gap:4px 18px; align-items:baseline;
+  padding:18px 22px 14px; border-bottom:1px solid var(--rule);
+}
+.wk{
+  grid-row:span 2; font-family:"IBM Plex Sans Condensed",Arial Narrow,sans-serif;
+  font-weight:700; font-size:40px; line-height:.86; color:var(--ink);
+  font-variant-numeric:tabular-nums; letter-spacing:-.02em;
+}
+.entry[data-filled="1"] .wk{color:var(--done)}
+.dates{
+  font-family:"IBM Plex Sans Condensed",Arial Narrow,sans-serif; font-weight:600;
+  font-size:19px; color:var(--ink); align-self:end;
+}
+.subline{
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:11px; color:var(--muted);
+  display:flex; flex-wrap:wrap; gap:4px 14px;
+}
+.subline .owed{color:var(--owed)}
+.entry[data-filled="1"] .subline .owed{color:var(--done)}
+
+.entry-body{padding:6px 22px 4px}
+section.part{padding-block:14px; border-bottom:1px dashed var(--rule)}
+section.part:last-child{border-bottom:0}
+.part h2{
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:10.5px; font-weight:600;
+  letter-spacing:.14em; text-transform:uppercase; color:var(--muted);
+  margin:0 0 9px;
+}
+.part ul{margin:0; padding-left:1.1em; display:flex; flex-direction:column; gap:9px}
+.part li{max-width:66ch}
+.part li::marker{color:var(--rule-strong)}
+.part strong{font-weight:600; color:var(--ink)}
+.part a{color:var(--focus); text-decoration-thickness:1px; text-underline-offset:2px}
+.part code{
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:.86em;
+  background:var(--sunk); padding:1px 4px; border-radius:2px; color:var(--ink);
+}
+
+.entry-foot{
+  display:flex; flex-wrap:wrap; gap:10px; align-items:center;
+  padding:14px 22px; border-top:1px solid var(--rule); background:var(--sunk);
+}
+button.copy{
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:12px; font-weight:500;
+  letter-spacing:.04em; color:var(--surface); background:var(--ink);
+  border:1px solid var(--ink); padding:8px 15px; border-radius:2px; cursor:pointer;
+}
+button.copy:hover{opacity:.86}
+button.copy[data-state="ok"]{background:var(--done); border-color:var(--done)}
+button.copy[data-state="err"]{background:var(--owed); border-color:var(--owed)}
+.mark{
+  display:inline-flex; align-items:center; gap:7px; cursor:pointer;
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:12px; color:var(--muted);
+}
+.mark input{accent-color:var(--done); width:15px; height:15px; cursor:pointer}
+.words{
+  margin-left:auto; font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:11px;
+  color:var(--faint); font-variant-numeric:tabular-nums;
+}
+.words[data-long="1"]{color:var(--owed)}
+
+:focus-visible{outline:2px solid var(--focus); outline-offset:2px}
+.foot{
+  margin-top:40px; padding-top:18px; border-top:1px solid var(--rule);
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:11.5px;
+  color:var(--muted); line-height:1.7; max-width:72ch;
+}
+.foot a{color:var(--focus)}
+@media (prefers-reduced-motion:no-preference){
+  button.copy{transition:background .18s ease, opacity .18s ease}
+  .chip{transition:background .18s ease, color .18s ease}
+}
+@media (max-width:520px){
+  .entry-head{grid-template-columns:1fr; gap:2px}
+  .wk{grid-row:auto; font-size:30px}
+  .dates{font-size:17px}
+  .entry-head,.entry-body,.entry-foot{padding-inline:16px}
+  .words{margin-left:0; width:100%}
+}
+</style>
+
+<div class="wrap">
+  <header class="mast">
+    <p class="eyebrow">{{EYEBROW}}</p>
+    <h1>{{TITLE}}</h1>
+    <p class="standfirst">{{N}} weekly updates, composed and verified from the record. Copy a week, paste it
+      into the update form, tick it off. A card tagged <em>week in progress</em> was composed before its week
+      closed — re-check it after the Monday re-run; <em>back-filled</em> cards were reconstructed from the
+      systems of record alone.</p>
+    <div class="mast-meta">
+      <span>{{RANGE}}</span>
+      <span><b id="m-weeks">{{N}}</b> weeks owed</span>
+      <span><b id="m-words">—</b> words total</span>
+      {{REPORT_LINK}}
+    </div>
+  </header>
+
+  <nav class="rail" aria-label="Jump to week">
+    <div class="rail-inner" id="rail"><span class="rail-label">Weeks</span></div>
+  </nav>
+
+  <main class="entries" id="entries"></main>
+
+  <footer class="foot">
+    Text is verbatim from the weekly self-assessment record — each week cross-checked against the
+    systems of record before it was written. The copy button puts formatted text on the
+    clipboard, so bold and ticket links survive the paste into the form's editor; if the field takes
+    plain text only, the keys stay readable and the formatting drops.
+    <br>Tick marks are stored in this browser only — nothing is sent anywhere.
+  </footer>
+</div>
+
+<script id="data" type="application/json">[]</script>
+<script>
+(function(){
+  "use strict";
+  var WEEKS = JSON.parse(document.getElementById("data").textContent);
+  var KEY = "update-ledger-filled-v1";
+  var filled = {};
+  try { filled = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) { filled = {}; }
+
+  function esc(s){
+    return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+  // markdown-lite: links, bold, inline code
+  function rich(s){
+    return esc(s)
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+        '<a href="$2" target="_blank" rel="noopener">$1</a>')
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/`([^`]+)`/g, "<code>$1</code>");
+  }
+  function plain(s){
+    return s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, "$1")
+            .replace(/\*\*([^*]+)\*\*/g, "$1")
+            .replace(/`([^`]+)`/g, "$1");
+  }
+  function wordCount(w){
+    var n = 0;
+    w.sections.forEach(function(s){
+      s.bullets.forEach(function(b){ n += plain(b).split(/\s+/).filter(Boolean).length; });
+    });
+    return n;
+  }
+  function asHTML(w){
+    return w.sections.map(function(s){
+      return "<p><strong>" + esc(s.heading) + "</strong></p><ul>" +
+        s.bullets.map(function(b){ return "<li>" + rich(b) + "</li>"; }).join("") + "</ul>";
+    }).join("");
+  }
+  function asText(w){
+    return w.sections.map(function(s){
+      return s.heading + "\n" +
+        s.bullets.map(function(b){ return "- " + plain(b); }).join("\n");
+    }).join("\n\n");
+  }
+
+  var rail = document.getElementById("rail");
+  var entries = document.getElementById("entries");
+  var totalWords = 0;
+
+  WEEKS.forEach(function(w){
+    var words = wordCount(w); totalWords += words;
+    var isOn = filled[w.id] ? "1" : "0";
+
+    var chip = document.createElement("a");
+    chip.className = "chip"; chip.href = "#" + w.id; chip.dataset.week = w.id;
+    chip.dataset.filled = isOn; chip.textContent = w.id;
+    rail.appendChild(chip);
+
+    var el = document.createElement("article");
+    el.className = "entry"; el.id = w.id; el.dataset.week = w.id; el.dataset.filled = isOn;
+    el.innerHTML =
+      '<div class="entry-head">' +
+        '<div class="wk">' + esc(w.id) + '</div>' +
+        '<div class="dates">' + esc(w.dates) + '</div>' +
+        '<div class="subline">' +
+          (w.nudge ? '<span class="owed">asked ' + esc(w.nudge) + '</span>' : '') +
+          (w.tag ? "<span>" + esc(w.tag) + "</span>" : "") +
+        '</div>' +
+      '</div>' +
+      '<div class="entry-body">' +
+        w.sections.map(function(s){
+          return '<section class="part"><h2>' + esc(s.heading) + "</h2><ul>" +
+            s.bullets.map(function(b){ return "<li>" + rich(b) + "</li>"; }).join("") +
+            "</ul></section>";
+        }).join("") +
+      '</div>' +
+      '<div class="entry-foot">' +
+        '<button class="copy" type="button">Copy update</button>' +
+        '<label class="mark"><input type="checkbox" id="mark-' + w.id + '"' +
+          (filled[w.id] ? " checked" : "") + '> Entered</label>' +
+        '<span class="words" data-long="' + (words > 350 ? "1" : "0") + '">' +
+          words + " words" + (words > 350 ? " · runs long for the form" : "") + "</span>" +
+      "</div>";
+
+    var btn = el.querySelector("button.copy");
+    btn.addEventListener("click", function(){
+      var html = asHTML(w), text = asText(w);
+      var done = function(){ flash(btn, "ok", "Copied ✓"); };
+      var fail = function(){ flash(btn, "err", "Select & copy manually"); };
+      try {
+        if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+          navigator.clipboard.write([new ClipboardItem({
+            "text/html": new Blob([html], {type:"text/html"}),
+            "text/plain": new Blob([text], {type:"text/plain"})
+          })]).then(done, function(){
+            navigator.clipboard.writeText(text).then(done, fail);
+          });
+        } else if (navigator.clipboard) {
+          navigator.clipboard.writeText(text).then(done, fail);
+        } else { fail(); }
+      } catch (e) { fail(); }
+    });
+
+    var box = el.querySelector("input[type=checkbox]");
+    box.addEventListener("change", function(){
+      filled[w.id] = box.checked;
+      if (!box.checked) delete filled[w.id];
+      el.dataset.filled = box.checked ? "1" : "0";
+      chip.dataset.filled = box.checked ? "1" : "0";
+      try { localStorage.setItem(KEY, JSON.stringify(filled)); } catch (e) {}
+      tally();
+    });
+
+    entries.appendChild(el);
+  });
+
+  function flash(btn, state, label){
+    var original = "Copy update";
+    btn.dataset.state = state; btn.textContent = label;
+    setTimeout(function(){ btn.removeAttribute("data-state"); btn.textContent = original; }, 1800);
+  }
+
+  var tallyEl = document.createElement("span");
+  tallyEl.className = "tally"; rail.appendChild(tallyEl);
+  function tally(){
+    var n = WEEKS.filter(function(w){ return filled[w.id]; }).length;
+    tallyEl.innerHTML = "<b>" + n + "</b> of " + WEEKS.length + " entered";
+    document.getElementById("m-weeks").textContent = WEEKS.length - n;
+  }
+  tally();
+  document.getElementById("m-words").textContent = totalWords.toLocaleString();
+})();
+</script>

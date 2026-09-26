@@ -1,0 +1,6 @@
+{
+  "system": "lattice",
+  "requires": "lattice",
+  "note": "no store facts: the flag's only input is the identity variable WORKSPACE_SLACK_LATTICE_DM (plugin option or settings.local.json), read at run time by self-assessment and kit-health — never copied into the store",
+  "facts": []
+}

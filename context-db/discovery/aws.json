@@ -1,0 +1,18 @@
+{
+  "system": "aws",
+  "requires": "aws_sso",
+  "facts": [
+    {"key": "aws.profile", "target": "row", "tool": "cli", "args": {"cmd": "aws configure list-profiles"},
+     "verify": "`aws sts get-caller-identity --profile <candidate>` answers after `aws sso login`; the handle names the role (stage, prod, kit-health), the value is the profile name",
+     "ttl_days": 365, "purpose": "named SSO profile by role"},
+    {"key": "aws.account", "target": "row", "tool": "cli", "args": {"cmd": "aws sts get-caller-identity --profile {row.aws.profile.{name}} --query Account --output text"},
+     "verify": "12 digits; matches the account shown in the SSO portal for that profile",
+     "ttl_days": 365, "purpose": "account id by environment handle"},
+    {"key": "aws.region", "target": "row", "tool": "cli", "args": {"cmd": "aws configure get region --profile {row.aws.profile.{name}}"},
+     "verify": "non-empty; the clusters below list under it",
+     "ttl_days": 365, "purpose": "default region by environment handle"},
+    {"key": "aws.cluster", "target": "row", "tool": "cli", "args": {"cmd": "aws eks list-clusters --profile {row.aws.profile.{name}} --output text"},
+     "verify": "`kubectl config get-contexts` shows a context for it; the value is the kube context name the skills pass to kubectl",
+     "ttl_days": 180, "purpose": "EKS cluster / kube context by environment handle"}
+  ]
+}

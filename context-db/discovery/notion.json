@@ -1,0 +1,13 @@
+{
+  "system": "notion",
+  "requires": "notion",
+  "facts": [
+    {"key": "notion.database", "target": "row", "tool": "notion-search", "args": {"query": "{name}"},
+     "verify": "notion-fetch on the id returns a data source / database whose title matches; the value is the 32-hex id",
+     "ttl_days": 365, "purpose": "database id by handle",
+     "note": "keep only data-source results; several with the same title → ask the user which workspace section"},
+    {"key": "notion.page", "target": "row", "tool": "notion-search", "args": {"query": "{name}"},
+     "verify": "notion-fetch on the id returns a page whose title matches and that is not archived",
+     "ttl_days": 180, "purpose": "page id by handle"}
+  ]
+}

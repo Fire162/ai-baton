@@ -1,0 +1,68 @@
+{
+  "system": "datalake",
+  "requires": "datalake",
+  "when": {
+    "config": "datalake.kind",
+    "equals": "snowflake"
+  },
+  "_comment": "Snowflake-specific: the SQL below only runs there. Another vendor gets its own datalake-<vendor>.json with the same keys and `when datalake.kind == <vendor>`.",
+  "facts": [
+    {
+      "key": "datalake.setting account",
+      "target": "row",
+      "tool": "sql_exec_tool",
+      "args": {
+        "sql": "select current_account(), current_region()"
+      },
+      "verify": "one row; the account matches the connector's URL",
+      "ttl_days": 0,
+      "purpose": "warehouse account identifier"
+    },
+    {
+      "key": "datalake.setting warehouse",
+      "target": "row",
+      "tool": "sql_exec_tool",
+      "args": {
+        "sql": "select current_warehouse(), current_role()"
+      },
+      "verify": "non-null; `show warehouses like '<name>'` lists it",
+      "ttl_days": 365,
+      "purpose": "default compute the connector runs on"
+    },
+    {
+      "key": "cost.spend_table",
+      "target": "config",
+      "tool": "sql_exec_tool",
+      "args": {
+        "sql": "select table_catalog || '.' || table_schema || '.' || table_name from snowflake.account_usage.tables where deleted is null and table_name ilike '%spend%' order by 1"
+      },
+      "verify": "`select count(*) from <table> where <date column> >= dateadd(day, -7, current_date)` is > 0 and the table has a per-user email column",
+      "ttl_days": 0,
+      "purpose": "the org's Claude spend table (cost-report org mode)",
+      "note": "several candidates → ask the user which is the billed source; none → leave empty (private mode)"
+    },
+    {
+      "key": "cost.columns",
+      "target": "config",
+      "tool": "sql_exec_tool",
+      "args": {
+        "sql": "describe table {config.cost.spend_table}"
+      },
+      "verify": "each of the eight roles (date, email, model, cost, input, output, cache_read, cache_write) maps to exactly one existing column; propose the mapping by name similarity and confirm the ambiguous ones with the user",
+      "ttl_days": 90,
+      "purpose": "column roles of the spend table"
+    },
+    {
+      "key": "datalake.tool sql",
+      "target": "row",
+      "tool": "roster",
+      "args": {
+        "tool": "sql_exec_tool"
+      },
+      "verify": "the tool is in this session's roster and answers `select 1`; the value is the tool name as the roster shows it (without the connector prefix)",
+      "ttl_days": 0,
+      "purpose": "the warehouse's SQL MCP tool cost-report and pr-review call",
+      "note": "another vendor's connector has another tool name — it lives in that vendor's datalake-<vendor>.json"
+    }
+  ]
+}

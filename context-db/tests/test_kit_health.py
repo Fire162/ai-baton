@@ -1,0 +1,285 @@
+"""kit-health.py's deterministic helpers and the shared leak shapes (#60): separated streams, no token exemption,
+tracker-aware ticket shape, anchored allow-list, loader errors reported, a plain run that never writes the DB.
+Stdlib unittest. Run: make -C .claude/context-db test."""
+from __future__ import annotations
+import importlib.util
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest import mock
+from pathlib import Path
+
+KIT = Path(__file__).resolve().parents[2]
+BIN = KIT / "context-db" / "bin"
+sys.path.insert(0, str(BIN))
+
+import kb  # noqa: E402
+import leak_shapes  # noqa: E402
+
+LEAK = "C0" + "AB12CD3EF"  # a Slack-shaped id, assembled so no scanner reads this file as a leak
+TICKET = "DATA-" + "1234"  # a ticket-shaped key, likewise
+PROJ = "PROJ-" + "42"
+
+
+def load_kit_health():
+    spec = importlib.util.spec_from_file_location("kit_health_under_test", KIT / "skills" / "kit-health" / "kit-health.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    return mod
+
+
+class Shapes(unittest.TestCase):
+    def hits(self, text: str, **kw) -> list[str]:
+        return [what for _n, what, _hit in leak_shapes.scan(text, shapes=leak_shapes.shapes(**kw))]
+
+    def test_ticket_shape_ignores_acronyms_and_week_numbers(self):
+        for s in ("AES-256", "RSA-2048", "ARM-64", "W37-2026", "SHA-256", "HMAC-256", "GPT-40", "UTF-16"):
+            self.assertEqual(self.hits(s), [], s)
+        self.assertEqual(self.hits(f"see {TICKET}"), ["ticket key"])
+        self.assertEqual(self.hits(f"see {PROJ}"), ["ticket key"])
+        self.assertEqual(self.hits("see KEY-123"), [])  # the docs' placeholder key stays exempt, as before
+
+    def test_tracker_aware_shapes(self):
+        # the generic shape stays on every tracker (a key from ANOTHER environment is the leak a shared kit risks);
+        # a Jira-style tracker's own key_regex is ADDED as a second shape, never swapped in
+        self.assertEqual(self.hits(f"see {TICKET}", tracker_kind="github"), ["ticket key"])
+        self.assertEqual(self.hits(f"see {TICKET}", tracker_kind="jira", key_regex=r"\b(PROJ-\d+)\b"), ["ticket key"])
+        own = "PROJ-" + "7"  # fits the regex but not the generic shape (one digit)
+        self.assertEqual(self.hits(f"see {own}", tracker_kind="jira", key_regex=r"\b(PROJ-\d+)\b"), ["ticket key (tracker.key_regex)"])
+        self.assertEqual(self.hits(f"see {own}", tracker_kind="github", key_regex=r"\b(PROJ-\d+)\b"), [])  # GitHub: no regex added
+        self.assertEqual(self.hits(f"see {TICKET}", tracker_kind="jira", key_regex=r"\b(PROJ-\d+"), ["ticket key"])  # invalid: nothing added
+        self.assertEqual(len(leak_shapes.shapes()), len(leak_shapes.LEAK_SHAPES))
+        self.assertEqual(len(leak_shapes.shapes("jira", r"\b(PROJ-\d+)\b")), len(leak_shapes.LEAK_SHAPES) + 1)
+
+    def test_a_key_fitting_both_ticket_shapes_is_one_hit(self):
+        # #136: both scanners stop at the first shape per line, so a key the generic shape AND tracker.key_regex match
+        # is one row (the generic one), never two
+        hits = leak_shapes.scan(f"see {PROJ}\n", shapes=leak_shapes.shapes("jira", r"\b(PROJ-\d+)\b"))
+        self.assertEqual(hits, [(1, "ticket key", PROJ)])
+
+    def test_no_token_exempts_a_line(self):
+        # #60 finding 2: the bare `kit-health` token used to exempt every line mentioning the skill
+        kh = load_kit_health()
+        self.assertIs(kh.SKIP_LINE, leak_shapes.SKIP_LINE)
+        self.assertEqual(len(leak_shapes.scan(f"kit-health posts to {LEAK}\n")), 1)
+        self.assertEqual(leak_shapes.scan(f'  facts: "slack.channel {LEAK}"\n'), [])
+
+    def test_allow_list_is_anchored(self):
+        # #60 finding 9: `README.md:acme` must not allow `docs/README.md:acme…`; a prefix entry still allows its own path
+        pats = (re.compile("skills/x/SKILL.md:C0"), re.compile(r"docs/a\.md:KEY-1$"))
+        self.assertTrue(leak_shapes.is_allowed("skills/x/SKILL.md", LEAK, pats))
+        self.assertFalse(leak_shapes.is_allowed("docs/skills/x/SKILL.md", LEAK, pats))
+        self.assertTrue(leak_shapes.is_allowed("docs/a.md", "KEY-1", pats))
+        self.assertFalse(leak_shapes.is_allowed("docs/a.md", "KEY-12", pats))
+
+    def kinds(self, text: str) -> list[str]:
+        return [what.split(" (")[0] for what in self.hits(text)]
+
+    def test_universal_sandbox_wording_shape(self):
+        # #76: a sandbox stated as the universe is a leak of one machine; a conditional or the config key is not
+        sb = "sand" + "box"  # assembled so this file never reads as a hit itself
+        for s in (f"This {sb} cannot run it", f"The {sb} has no browser", f"works from the {sb}", f"shared by every session on this {sb}",
+                  f"the {sb} token lacks the scope", f"a variable that is {sb}-only", f"the {sb} lacks a keyring", f"{sb} can't sign"):
+            self.assertEqual(self.kinds(s), ["universal sandbox wording"], s)
+        for s in (f"where gh works through a token-injecting proxy (a {sb}), the token", f"github.{sb}_token_prefix",
+                  f"a {sb} recreate wipes ~/.claude", f"a {sb} whose proxy injects credentials", f"{sb}ed processes"):
+            self.assertEqual(self.kinds(s), [], s)
+
+    def test_sandbox_only_path_and_variable_shapes(self):
+        # #76: the mount path and the per-job directory variable exist on one kind of machine only — any expansion of the
+        # variable is a hit now (before: only a path under it), a read through os.environ in the resolver is not
+        sb = "sand" + "box"
+        self.assertEqual(self.kinds("check for " + "/run/" + sb + "/source"), [f"{sb}-only path"])
+        self.assertEqual(self.kinds("`" + "/run/" + sb + "`"), [f"{sb}-only path"])
+        var = "CLAUDE_JOB" + "_DIR"
+        self.assertEqual(self.kinds(f"`${var}` is unset on a host"), [f"{sb}-only variable"])
+        self.assertEqual(self.kinds("${" + var + "}/tmp/x"), [f"{sb}-only variable"])
+        self.assertEqual(self.kinds(f'os.environ.get("{var}")'), [])
+        self.assertEqual(self.kinds("a path like /run/lock or /run/user/1000"), [])
+
+    def test_memory_note_pointer_shapes(self):
+        # #76: every form a pointer to a personal note took in the kit; the harness auto-memory feature named generically is not one
+        note = "some-" + "note"
+        mn, mem = "memory " + "note", "Memor" + "ies:"  # the pointer forms themselves, assembled so this file is no hit
+        for s in (f"(memory `{note}`)", f"in the {mn} `{note}.md`", f"{mem} `{note}`, `other`", f"live in the {mn}",
+                  f"see the {mn}s for the history", mem):
+            self.assertEqual(self.kinds(s), ["memory-note pointer"], s)
+        for s in ("If you added a memory note, confirm it has a `MEMORY.md` line", "the `MEMORY.md` index if a memory note changed",
+                  "auto-memory in `.context/memory/`", "never type a profile from memory into `kb set`", "Memory notes live in .context"):
+            self.assertEqual(self.kinds(s), [], s)
+
+    def test_mcp_backed_is_a_subset_of_systems(self):
+        # #76 (kit-health finding 21): kit-health reads the MCP-backed list from kb.py, beside the flag list it must stay a subset of
+        self.assertTrue(set(kb.MCP_BACKED) <= set(kb.SYSTEMS), kb.MCP_BACKED)
+        self.assertNotIn("aws_sso", kb.MCP_BACKED)
+        self.assertNotIn("lattice", kb.MCP_BACKED)
+
+    def test_allow_txt_ships_no_login_or_readme_entry(self):
+        # #60 finding 1: the kit's own repo name is exempt by kit_repo()/kit_dependencies(); allow.txt carries no identity
+        lines = [ln.split("#", 1)[0].strip() for ln in (KIT / "skills" / "kit-health" / "allow.txt").read_text(encoding="utf-8").splitlines()]
+        self.assertFalse([ln for ln in lines if ln.startswith("README.md:")], lines)
+
+
+class Helpers(unittest.TestCase):
+    def test_sh_keeps_stdout_and_stderr_apart(self):
+        kh = load_kit_health()
+        rc, out, err = kh.sh([sys.executable, "-c", "import sys; print('summary'); print('~ stale: x', file=sys.stderr)"])
+        self.assertEqual((rc, out, err), (0, "summary", "~ stale: x"))
+        rc, out, err = kh.sh(["/no/such/binary"])
+        self.assertEqual((rc, out), (127, ""))
+        self.assertTrue(err)
+        self.assertEqual(kh.both("a", ""), "a")
+        self.assertEqual(kh.both("a", "b"), "a\nb")
+
+    def test_loader_failure_is_an_error_line_not_silence(self):
+        kh = load_kit_health()
+        saved = kh.kb.all_facts
+        kh.kb.all_facts = lambda: (_ for _ in ()).throw(ValueError("bad table"))
+        try:
+            pats, errors = kh.configured_values()
+        finally:
+            kh.kb.all_facts = saved
+        self.assertTrue(any("env-store tables could not be read (bad table)" in e for e in errors), errors)
+        self.assertIsInstance(pats, list)
+
+
+class ReadOnlyRun(unittest.TestCase):
+    def engine_section(self, root: Path, stamping: bool = False) -> str:
+        """kit-health's section 5 alone, on a temp CONTEXT_ROOT — no gh/aws probes, no network (the module's CTX is
+        read from CONTEXT_ROOT at exec time)."""
+        import unittest.mock
+        with unittest.mock.patch.dict(os.environ, {"CONTEXT_ROOT": str(root)}):
+            kh = load_kit_health()
+        r = kh.Report()
+        kh.sec_engine(r, stamping=stamping)
+        return "\n".join(r.lines)
+
+    def test_plain_run_never_rewrites_index(self):
+        # #60 finding 3: a plain run executed `make verify index` on the live DB; now it reports the stale index instead
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / ".context"
+            env = {k: v for k, v in os.environ.items() if k != "WORKSPACE_TZ"}
+            env["CONTEXT_ROOT"] = str(root)
+            subprocess.run([sys.executable, str(BIN / "kb.py"), "init", "--blank"], env=env, check=True, capture_output=True)
+            (root / "repos").mkdir()
+            (root / "repos" / "a.md").write_text("---\ntitle: A\ntype: repo\ndomain: repos\nstatus: active\nupdated: 2026-09-26\n---\n", encoding="utf-8")
+            (root / "INDEX.md").write_text("stale by hand\n", encoding="utf-8")
+            report = self.engine_section(root)
+            self.assertEqual((root / "INDEX.md").read_text(encoding="utf-8"), "stale by hand\n")  # untouched
+            self.assertIn("⚠️ `.context/INDEX.md` is stale", report)
+            self.assertIn("a plain run never writes the DB", report)
+            self.assertIn("this run re-indexes after the stamp", self.engine_section(root, stamping=True))
+            # an oversized doc adds `- <path>: NNKB` notes on stderr; a stale index next to it is still the WARN, not an ERR
+            (root / "repos" / "big.md").write_text("---\ntitle: Big\ntype: repo\ndomain: repos\nstatus: active\nupdated: 2026-09-26\n---\n" + "x" * 40_000 + "\n", encoding="utf-8")
+            report = self.engine_section(root)
+            self.assertIn("⚠️ `.context/INDEX.md` is stale", report)
+            self.assertNotIn("❌ `make verify` failed", report)
+            # a real schema problem is the ERR
+            (root / "repos" / "bad.md").write_text("---\ntitle: Bad\ntype: novel\ndomain: repos\nstatus: active\nupdated: 2026-09-26\n---\n", encoding="utf-8")
+            self.assertIn("❌ `make verify` failed", self.engine_section(root))
+
+
+class ReviewFindings(unittest.TestCase):
+    """#121: the fixed finding shape is counted per level and rule — resolved thread = acted on, open = dismissed."""
+
+    def test_finding_stats_counts_only_bot_findings_in_shape(self):
+        kh = load_kit_health()
+
+        def th(body, resolved, login="claude"):
+            return {"isResolved": resolved, "comments": {"nodes": [{"author": {"login": login}, "body": body}]}}
+        prs = [{"number": 1, "reviewThreads": {"nodes": [
+                    th("[STOP] skills/x/SKILL.md:12 — names a workplace (REVIEW.md § 2.1)", True),
+                    th("[WARN] setup.sh:40 — is the emptiness meaningful? (REVIEW.md § 2.3)", False),
+                    th("[NIT] README.md:3 — typo (REVIEW.md § 3)", True),
+                    th("free-form comment without the shape", False),
+                    th("[STOP] a.md:1 — from a human, not the bot (x)", False, login="someone")]}},
+               {"number": 2, "reviewThreads": {"nodes": [th("**WARN** — old style", False), th("  [WARN] b.sh:2 — no rule given", False)]}}]
+        st = kh.finding_stats(prs)
+        self.assertEqual((st["prs"], st["findings"], st["acted"], st["dismissed"]), (2, 4, 2, 2))
+        self.assertEqual(st["levels"]["STOP"], {"acted": 1, "dismissed": 0})
+        self.assertEqual(st["levels"]["WARN"], {"acted": 0, "dismissed": 2})
+        self.assertEqual(st["rules"]["REVIEW.md § 2.3"], {"acted": 0, "dismissed": 1})
+        self.assertEqual(st["rules"]["unnamed rule"], {"acted": 0, "dismissed": 1})
+        self.assertEqual(kh.finding_stats([]), {"prs": 0, "findings": 0, "acted": 0, "dismissed": 0, "levels": {}, "rules": {}})
+
+    def test_review_ratio_is_silent_without_gh_or_remote(self):
+        kh = load_kit_health()
+        r = kh.Report()
+        with mock.patch.object(kh.shutil, "which", return_value=None):
+            kh.review_ratio(r)
+        self.assertEqual(r.lines, [])
+
+
+class Seeds(unittest.TestCase):
+    """#79: a seeded copy older than its template's last commit is stale; the check never reads git when a time function
+    is injected, and a missing file on either side is not stale."""
+
+    def test_stale_seeds_compares_template_commit_time_with_copy_mtime(self):
+        kh = load_kit_health()
+        with tempfile.TemporaryDirectory() as tmp:
+            tpl = Path(tmp) / "tpl.md"; copy = Path(tmp) / "copy.md"; missing = Path(tmp) / "none.md"
+            tpl.write_text("t\n"); copy.write_text("c\n")
+            os.utime(copy, (1_000_000_000, 1_000_000_000))
+            pairs = [(tpl, copy), (tpl, missing)]
+            self.assertEqual(kh.stale_seeds(pairs, template_time=lambda p: 2_000_000_000), ([(tpl, copy)], []))
+            self.assertEqual(kh.stale_seeds(pairs, template_time=lambda p: 0), ([], [(tpl, copy)]))  # no git: not compared, never "fresh"
+            self.assertEqual(kh.stale_seeds(pairs, template_time=lambda p: 999_999_999), ([], []))
+            self.assertEqual(len(kh.seed_pairs()), 4)
+            r = kh.Report()
+            with mock.patch.object(kh, "stale_seeds", return_value=([], [(tpl, copy)])):
+                kh.seed_wiring(r)
+            self.assertTrue(any("not checked" in l for l in r.lines) and not any("not older" in l for l in r.lines))
+
+
+
+class Verdict(unittest.TestCase):
+    """#83: the stamp refuses on un-accepted leak hits, the value scan skips common-word kinds and short plain words,
+    every reported value is redacted, the changed-units list comes from git."""
+
+    def test_may_stamp_needs_no_errors_and_no_leak_hits(self):
+        kh = load_kit_health()
+        r = kh.Report()
+        self.assertTrue(kh.may_stamp(r))
+        r.leak_hits = 1
+        self.assertFalse(kh.may_stamp(r))
+        r.leak_hits = 0; r.add(kh.ERR, "x", "boom")
+        self.assertFalse(kh.may_stamp(r))
+
+    def test_keep_value_skips_common_kinds_short_words_and_placeholders(self):
+        kh = load_kit_health()
+        common = {"github.person", "github.team"}
+        self.assertFalse(kh.keep_value("Mark", "github.person", common))         # common-word kind, plain single word
+        self.assertFalse(kh.keep_value("Marianne", "github.person", common))     # long, still one plain word in a common-word kind
+        self.assertTrue(kh.keep_value("First Last", "github.person", common))    # a space: the display name is scanned
+        self.assertTrue(kh.keep_value("acme-platform", "github.team", common))   # a hyphen: the team slug is scanned
+        self.assertFalse(kh.keep_value("data", "github.label-set", common))      # a plain word under six letters, any kind
+        self.assertFalse(kh.keep_value("<owner>", "tracker.repos", common))
+        self.assertFalse(kh.keep_value("12345", "aws.account", common))          # short number
+        self.assertTrue(kh.keep_value("acme-platform", "slack.channel", common))
+        self.assertTrue(kh.keep_value("C0" + "AB12CD3", "slack.channel", common))  # an id from four chars
+        self.assertFalse(kh.keep_value("Mark", "slack.user", common))            # a short plain word, kind not flagged
+        self.assertTrue(kh.keep_value("acme", ""))                               # a config/identity value keeps the four-char floor
+        self.assertTrue(kh.keep_value("Mark", ""))
+        self.assertEqual(kh.common_word_kinds() >= {"github.person", "github.team", "github.label-set"}, True)
+
+    def test_redact_names_the_kind_and_two_characters(self):
+        kh = load_kit_health()
+        self.assertEqual(kh.redact("Slack channel/DM id", "C0" + "AB12CD3EF"), "Slack channel/DM id:C0…")
+        self.assertEqual(kh.redact("env fact `slack.channel`", "team-alerts"), "slack.channel:te…")
+        self.assertEqual(kh.redact("tracker.repos (repo name)", "ab"), "tracker.repos:…")
+        self.assertNotIn("AB12CD3EF", kh.redact("Slack channel/DM id", "C0" + "AB12CD3EF"))
+
+    def test_changed_units_groups_by_skill_dir(self):
+        kh = load_kit_health()
+        with mock.patch.object(kh, "sh", return_value=(0, "skills/a/SKILL.md\nskills/a/run.sh\nagents/t.md\nWORKSPACE.md\n", "")):
+            self.assertEqual(kh.changed_units("abc"), ["skills/a", "agents/t.md", "WORKSPACE.md"])
+        with mock.patch.object(kh, "sh", return_value=(128, "", "unknown revision")):
+            self.assertIsNone(kh.changed_units("abc"))  # not "nothing changed": the caller reports it as unknown
+        with mock.patch.object(kh, "sh", return_value=(0, "", "")):
+            self.assertEqual(kh.changed_units("abc"), [])
+
+if __name__ == "__main__":
+    unittest.main()

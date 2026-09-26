@@ -1,0 +1,11 @@
+# Leak-scan allowlist — one regex per line, anchored at the START of "<path relative to .claude>:<matched text>" (append
+# `$` for an exact match; a line that does not compile is skipped with a warning, never a crash). Read by BOTH
+# scanners (kit-health § leaks over every kit file, and kit-verify's env-free scan of each skill/agent file), so a
+# unit's dated example is allowed here or nowhere.
+# Use it for provenance that is not configuration (a dated example that must stay verbatim), never for a
+# value a skill actually reads. Keep it short; every line here is a value the kit ships to every environment.
+# Inline `# reason` comments are allowed after the regex.
+environment-template/config.json:acme\.  # template placeholders (acme.atlassian.net / acme.slack.com)
+settings.local.example.json:Europe/Berlin   # example value for WORKSPACE_TZ in the settings template
+docs/CHANGELOG\.md:(?:[Tt]his|the|in the) sandbox$   # history lines quote the wording a later version removed (#76). The allow format cannot pin a line, so a NEW CHANGELOG line with this wording also passes: the reviewer reads CHANGELOG additions for it
+docs/CHANGELOG\.md:sandbox-only$                     # same, for the #55 line that names the shape it added

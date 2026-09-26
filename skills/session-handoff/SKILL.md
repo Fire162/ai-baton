@@ -1,0 +1,102 @@
+---
+name: session-handoff
+description: Flush durable knowledge before a session ends or a ticket/PR/epic step lands: the context doc, priorities, indexes, the session's stats (context doc, session file, cross-session ledger) and the paste-ready next-session prompt the successor starts from. Invoke when finishing a piece of work, before ending a session, or on "wrap up / hand off / update context".
+metadata:
+  version: "5"
+  updated: "2026-09-26"
+  reviewed: "2026-09-24"
+user-invocable: true
+---
+
+# session-handoff — flush before you end
+
+A compacted transcript has already lost the nuance; the knowledge only survives if it is written
+to the durable docs. Run this close-out whenever a ticket/PR/epic step lands, or before ending a
+session. It implements the **§ Cost & context hygiene "Flush at every step"** and **"Scope → flush →
+end"** rules in `.claude/WORKSPACE.md` (the shared body of the root `CLAUDE.md`).
+
+## Checklist
+
+1. **Context doc** — the initiative's local living doc in its domain folder (the `.context/` file,
+   *not* the tracker epic; e.g. `.context/<domain>/<key>-<slug>.md` or `.context/<domain>/epics/<slug>.md`) — find it in
+   `.context/INDEX.md` or with `make -C .claude/context-db find DOMAIN=<domain>`:
+   - Add a dated one-liner to the **Session log** (newest first).
+   - Update the relevant fixed section (*What was built* — PRs per repo; *Key decisions & gotchas*;
+     *Infra/secrets locations*; *Remaining work*) with anything durable you learned or shipped. Keep
+     the doc lean — long history goes to `.context/archive/<slug>-log.md`.
+   - **Cap the Session log.** Keep only the newest entries in the doc (roughly the last few days,
+     ~6 max); move the older tail verbatim to `.context/archive/<slug>-log.md` (newest-first).
+     `make -C .claude/context-db verify` warns when an active doc tops **30KB** — an oversized doc thrashes
+     any session that re-reads it after a compact, so split it when you see the warning (or before).
+   - Reference every ticket/PR as a clickable link (§ Rules).
+2. **Priorities** — where `.context/reference/priorities.md` exists, tick the matching checkbox(es)
+   and add the next step if one emerged (an environment without that file skips this step).
+3. **Task-specific docs** — if you did a PR review, update `.context/pr-reviews/<repo>.md`
+   and its README; if on-call, append `.context/on-call/rotations/<week>.md`; if it's Thursday and
+   you're the self-assessment session, append `.context/self-assessment/weeks/<week>.md`. New docs
+   are created with `make -C .claude/context-db new TYPE=… DOMAIN=… SLUG=…`.
+4. **Memory** — only if a *situational* fact worth recalling emerged (not an always-on rule — those
+   go to `CLAUDE.md` § Rules). Write or update the note **and** add or fix its one-line entry in
+   `MEMORY.md`. Prefer updating an existing note over adding a duplicate; delete notes proven wrong.
+5. **Index integrity** — after adding or editing any `.context/` doc, run `make -C .claude/context-db index`
+   (regenerates `INDEX.md`) and `make -C .claude/context-db verify` (schema + freshness gate). If you added a
+   skill, add its trigger to `WORKSPACE.md` § Skills. If you added a memory note, confirm it has a
+   `MEMORY.md` line (no orphans). Every `[[wikilink]]` should resolve.
+6. **Signing** — only where the env config has `systems.signed_commits: true`: pending commits go through
+   the `sign-queue` skill (enqueue; the user drains). Don't leave a session with unpushed signed work
+   unmentioned. Elsewhere, commits are pushed directly per the repo's own conventions.
+7. **Stop your monitors** — `TaskStop` every `pr-watch` / other `Monitor` this session armed *before*
+   the registry step, so no event fires into a session that is ending (and the successor re-arms from a
+   clean list, one watcher per PR across sessions). A session whose PRs all wait on host/human gates
+   should *arrive* here after two idle Monitor windows rather than re-arming a third — an idle watcher
+   costs a full-prefix wake-up per expiry, a parked session costs nothing (owner decision, 2026-09-22; `pr-watch`
+   § Park when the gates are not yours).
+8. **Session stats — record them (owner decision, 2026-09-19: "stats for geeks").** Run
+   `make -C .claude/context-db session-stats` (zero model turns; derived from the transcript via
+   `$CLAUDE_CODE_SESSION_ID`) and put:
+   - the **one-liner** (the `stats:` value the registry row carries: turns · hours · ctx peak/avg ·
+     cache-read · out · ~$ · compactions · tool calls · PRs · tickets · sign jobs · drafts) into the
+     context doc's wind-down **Session log** entry;
+   - the **block** (window, prompts, token split, spend basis, top tools, delegation, PR + ticket lists,
+     hand-offs) is written for you under `## Session stats` in `.context/sessions/<name>.md` by
+     `session-end` (step 9), together with one row in `.context/sessions/_ledger.md` — don't paste it
+     twice. Add one line of *judgment* next to the numbers in the context doc (what drove the cost: fat
+     prefix × watcher events, a CI-log read at full prefix, etc.) — the numbers alone don't teach the
+     next session anything.
+   Turns are deduped API requests; spend is a per-model list-price estimate and, since 2026-09-22, the
+   TOTAL of main session + every subagent transcript (`<session-id>/subagents/*.jsonl`) — quote the total,
+   the block shows the main/subagent split — and say "estimate" when you quote it. If the transcript isn't discoverable (no
+   `CLAUDE_CODE_SESSION_ID`, e.g. a subagent), say so and skip; never invent the figures.
+9. **Session registry + PR watches** — first refresh the `## Open PRs` list in
+   `.context/sessions/<name>.md` (every open PR you own: `repo#n`, current head, what it waits on):
+   your `pr-watch` `Monitor`s died with step 7, and the successor's `session-register` startup step
+   re-arms exactly that list. Then mark the session ended:
+   `make -C .claude/context-db session-end NAME=<name> NEXT=<prompt file>` (step 10 writes the file; or
+   `session-touch` if you're only pausing). The registry row carries **~$ est.** (list-price estimate of
+   the main session, subagents excluded) and the prompt as their own columns.
+   Keeps `.context/SESSION_INDEX.md` honest about who is still live, and `session-end` is what writes
+   the stats block + ledger row of step 8. (Setup: the `session-register` skill.)
+10. **Next-session prompt — write it, register it, say it (owner decision, 2026-09-19).** Draft the prompt a
+    fresh session on this lane should be started with: ≤12 plain lines (no code fence inside), covering
+    the session `NAME` to register (successor of `<this name>`), the epic, the files to read first
+    (context doc sections, exports), what it owns and must NOT touch, the first task with its ticket,
+    open follow-ups (drafts by `draft_id`, pending verdicts), and the open PRs / watchers to re-arm
+    (or "none"). Run `python3 .claude/context-db/bin/kit_profile.py scratch` once and use the **printed path**
+    (a per-session dir that exists on every machine — never a bare `/tmp` path, which sessions overwrite; shell
+    variables do not survive between tool calls, so the Write call takes the literal path) for `<dir>/next.md`, then
+    pass the same path to the registry step: `make -C .claude/context-db session-end NAME=<name> NEXT=<dir>/next.md`
+    (`session-touch … NEXT=` when only pausing). It lands in `## Next session` of your session file,
+    and its first line in the **Next-session prompt** column of `SESSION_INDEX.md` — the successor's
+    `session-register` startup reads it from there. Then **end
+    your last chat message with the same prompt in a code block** so the user can paste it into the new
+    session without opening the index. Internal surface: local paths are fine here.
+11. **Coordination** — if another active session owns follow-on work (check `SESSION_INDEX.md`),
+   leave the handoff in the context doc; message a peer only for a lock/handoff, not to dump
+   context (§ Cost & context hygiene).
+
+## Done when
+
+The next session could pick up cold from `.context/` alone — no reliance on this transcript — and
+its start prompt is in the registry **and** in your final chat message (step 10).
+Then end the session (don't let it sprawl past its ticket; `autoCompactWindow` is a backstop, not
+a reason to keep a session alive).

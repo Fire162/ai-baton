@@ -1,0 +1,10 @@
+{
+  "_comment": "Clone path only — on a plugin install these are the plugin's userConfig options (`/plugin configure ai-baton`), which win over this file. Copy to .claude/settings.local.json (gitignored) and fill in. Claude Code merges `env` into every Bash/hook/subagent environment, so scripts and skills read your identity from here instead of hardcoding it. Everything about the ENVIRONMENT (tracker, org, channels, systems on/off, its name) lives in the env store .context/reference/env/ (kb.py; setup.sh creates a blank one) — not here.",
+  "env": {
+    "WORKSPACE_USER": "",
+    "WORKSPACE_GITHUB_LOGIN": "",
+    "WORKSPACE_TZ": "<IANA tz, e.g. Europe/Berlin>",
+    "WORKSPACE_SLACK_SELF_DM": "",
+    "WORKSPACE_SLACK_LATTICE_DM": ""
+  }
+}

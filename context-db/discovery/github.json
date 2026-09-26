@@ -1,0 +1,85 @@
+{
+  "system": "github",
+  "facts": [
+    {
+      "key": "github.org",
+      "target": "config",
+      "tool": "cli",
+      "args": {
+        "cmd": "gh repo view --json owner --jq .owner.login"
+      },
+      "verify": "run in a team repo directory; `gh api orgs/<login>` answers (a user login is not an org)",
+      "ttl_days": 0,
+      "purpose": "the organisation the team's repos live in"
+    },
+    {
+      "key": "github.owner_teams",
+      "target": "config",
+      "tool": "cli",
+      "args": {
+        "cmd": "gh api user/teams --paginate --jq '.[] | select(.organization.login == \"{config.github.org}\") | .slug'"
+      },
+      "verify": "each slug appears in a CODEOWNERS file of a team repo (`gh api repos/<o>/<r>/contents/.github/CODEOWNERS`)",
+      "ttl_days": 180,
+      "purpose": "the user's teams that CODEOWNERS may request"
+    },
+    {
+      "key": "github.review_bot",
+      "target": "config",
+      "tool": "cli",
+      "args": {
+        "cmd": "gh api 'repos/{config.github.org}/<repo>/pulls?state=closed&per_page=30' --jq '.[].requested_reviewers[]?.login' | sort | uniq -c | sort -rn"
+      },
+      "verify": "a login ending in [bot] (or the org's review app) requested on most PRs; none → leave empty",
+      "ttl_days": 0,
+      "purpose": "the bot whose review is the pr-watch verdict"
+    },
+    {
+      "key": "github.signed_commits",
+      "target": "config",
+      "tool": "cli",
+      "args": {
+        "cmd": "gh api repos/{config.github.org}/<repo>/rules/branches/main --jq '[.[] | select(.type == \"required_signatures\")] | length'"
+      },
+      "verify": "> 0 on the team's main repos → true; also true when a push was rejected for an unsigned commit",
+      "ttl_days": 0,
+      "purpose": "whether commits go through the sign-queue"
+    },
+    {
+      "key": "github.person",
+      "target": "row",
+      "tool": "cli",
+      "args": {
+        "cmd": "gh api users/{name} --jq .name"
+      },
+      "verify": "the account exists and is a member of the org (`gh api orgs/{config.github.org}/members/{name}` → 204)",
+      "ttl_days": 365,
+      "purpose": "display name (first name) by login",
+      "common_word": true
+    },
+    {
+      "key": "github.team",
+      "target": "row",
+      "tool": "cli",
+      "args": {
+        "cmd": "gh api orgs/{config.github.org}/teams/{name} --jq '[.slug, .members_count] | @tsv'"
+      },
+      "verify": "the team exists and has write on the repos it owns (`codeowners/errors` on the repo is empty)",
+      "ttl_days": 180,
+      "purpose": "team slug that CODEOWNERS names",
+      "common_word": true
+    },
+    {
+      "key": "github.label-set",
+      "target": "row",
+      "tool": "cli",
+      "args": {
+        "cmd": "gh label list -R {name} --limit 200 --json name --jq 'map(.name) | join(\",\")'"
+      },
+      "verify": "the list is non-empty; the row handle is <owner/repo>",
+      "ttl_days": 90,
+      "purpose": "labels a repo actually has (pr-open's type/area mapping)",
+      "common_word": true
+    }
+  ]
+}

@@ -1,0 +1,220 @@
+#!/bin/sh
+# shellcheck disable=SC2034  # OUT / RC are read inside the quoted `check` expressions, which shellcheck cannot see
+# setup_sh_scenarios.sh — bats-free scenario test for setup.sh (#62). `sh -e` and POSIX tools only.
+#
+#   sh context-db/tests/setup_sh_scenarios.sh            # from the kit root; exit 0 = every scenario passed
+#
+# Each scenario runs setup.sh from a COPY of the kit (no .git, so the hooks step is a no-op) with HOME and PROJECTS in
+# a scratch tree, and asserts on the resulting files. `make -C .claude/context-db test` runs it through
+# tests/test_setup_sh.py.
+set -eu
+
+KIT="$(cd "$(dirname "$0")/../.." && pwd)"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+fails=0
+
+pass() { echo "  ok   $1"; }
+fail() { echo "  FAIL $1" >&2; fails=$((fails + 1)); }
+check() { if eval "$2"; then pass "$1"; else fail "$1"; fi; }
+
+# a kit copy without .git: setup.sh reads templates from it and skips the git-hooks step
+KITCOPY="$WORK/kit"
+mkdir -p "$KITCOPY"
+(cd "$KIT" && find . -path ./.git -prune -o -type f -print | sed 's|^\./||' | while IFS= read -r f; do
+  mkdir -p "$KITCOPY/$(dirname "$f")"; cp "$KIT/$f" "$KITCOPY/$f"; done)
+
+# scenario N: a fresh workspace tree with its own HOME; prints the paths setup.sh derives
+scenario() {  # scenario <name> → sets WS (workspace root), HOME_DIR, MEM (harness memory dir), DUR (durable memory dir)
+  WS="$WORK/$1/ws"; HOME_DIR="$WORK/$1/home"
+  mkdir -p "$WS" "$HOME_DIR"
+  rm -rf "$WS/.claude"; cp -R "$KITCOPY" "$WS/.claude"
+  SLUG="$(printf '%s' "$WS" | sed 's#/#-#g')"
+  MEM="$HOME_DIR/.claude/projects/$SLUG/memory"; DUR="$WS/.context/memory"
+}
+run_setup() {  # run_setup [args…] → stdout+stderr in $OUT, exit status in $RC
+  set +e
+  OUT="$(cd "$WS" && HOME="$HOME_DIR" PROJECTS="$WS" sh "$WS/.claude/setup.sh" "$@" 2>&1)"; RC=$?
+  set -e
+}
+
+echo "== 1. fresh machine: symlink created, store and files seeded =="
+scenario fresh
+run_setup
+check "exit 0" '[ "$RC" -eq 0 ]'
+check "memory symlink -> durable" '[ -L "$MEM" ] && [ "$(cd "$MEM" && pwd -P)" = "$(cd "$DUR" && pwd -P)" ]'
+check "blank env store created" '[ -f "$WS/.context/reference/env/config.json" ]'
+check "CLAUDE.md, Makefile, environment.md seeded" '[ -f "$WS/CLAUDE.md" ] && [ -f "$WS/Makefile" ] && [ -f "$WS/.context/reference/environment.md" ]'
+check "idempotent: second run exits 0 and keeps the link" 'run_setup; [ "$RC" -eq 0 ] && [ -L "$MEM" ] && printf "%s" "$OUT" | grep -q "symlink present -> durable"'
+
+echo "== 2. real memory dir: every note migrated and verified before the dir goes =="
+scenario migrate
+mkdir -p "$MEM/sub" "$DUR"
+printf 'fresh note\n' > "$MEM/new.md"
+printf 'nested note\n' > "$MEM/sub/deep.md"
+printf 'with space\n' > "$MEM/has space.md"
+printf 'harness copy\n' > "$MEM/both.md"
+printf 'durable copy\n' > "$DUR/both.md"
+run_setup
+check "exit 0" '[ "$RC" -eq 0 ]'
+check "new notes arrive in durable (incl. nested and a name with a space)" '[ "$(cat "$DUR/new.md")" = "fresh note" ] && [ "$(cat "$DUR/sub/deep.md")" = "nested note" ] && [ "$(cat "$DUR/has space.md")" = "with space" ]'
+check "a note both sides have keeps the durable copy" '[ "$(cat "$DUR/both.md")" = "durable copy" ]'
+check "harness dir replaced by the symlink" '[ -L "$MEM" ]'
+check "report counts 4 verified, 3 new, 1 already durable" 'printf "%s" "$OUT" | grep -q "4 files verified, 3 new, 1 already durable"'
+check "no staging dir left behind" '[ -z "$(ls -d "$WS/.context/.memory-migrate."* 2>/dev/null)" ]'
+
+echo "== 3. a failed copy leaves the original untouched and exits non-zero =="
+scenario failcopy
+mkdir -p "$MEM" "$WORK/fakebin"
+printf 'precious\n' > "$MEM/note.md"
+printf '#!/bin/sh\nexit 1\n' > "$WORK/fakebin/cmp"; chmod +x "$WORK/fakebin/cmp"   # every byte-verify fails
+set +e
+OUT="$(cd "$WS" && HOME="$HOME_DIR" PROJECTS="$WS" PATH="$WORK/fakebin:$PATH" sh "$WS/.claude/setup.sh" 2>&1)"; RC=$?
+set -e
+check "exit non-zero" '[ "$RC" -ne 0 ]'
+check "message names the incomplete migration" 'printf "%s" "$OUT" | grep -q "memory migration incomplete (0 of 1 files copied)"'
+check "original notes untouched, no symlink" '[ -d "$MEM" ] && [ ! -L "$MEM" ] && [ "$(cat "$MEM/note.md")" = "precious" ]'
+check "staging dir removed" '[ -z "$(ls -d "$WS/.context/.memory-migrate."* 2>/dev/null)" ]'
+
+echo "== 4. a symlink to another target is reported and left alone; --force repoints =="
+scenario elsewhere
+mkdir -p "$(dirname "$MEM")" "$WORK/elsewhere/notes"
+printf 'orphan?\n' > "$WORK/elsewhere/notes/x.md"
+ln -s "$WORK/elsewhere/notes" "$MEM"
+run_setup
+check "exit 0 (a warning, not a failure)" '[ "$RC" -eq 0 ]'
+check "warning names the other target" 'printf "%s" "$OUT" | grep -q "WARNING: memory symlink points to"'
+check "link untouched" '[ "$(cd "$MEM" && pwd -P)" = "$(cd "$WORK/elsewhere/notes" && pwd -P)" ]'
+run_setup --force
+check "--force repoints to durable" '[ "$RC" -eq 0 ] && [ "$(cd "$MEM" && pwd -P)" = "$(cd "$DUR" && pwd -P)" ] && printf "%s" "$OUT" | grep -q "repointed"'
+check "unknown argument is exit 2" 'run_setup --bogus; [ "$RC" -eq 2 ]'
+check "--help prints the whole header incl. the PROJECTS override note" 'run_setup --help; [ "$RC" -eq 0 ] && printf "%s" "$OUT" | grep -q "override with PROJECTS=" && ! printf "%s" "$OUT" | grep -q "^set -eu"'
+
+echo "== 4b. a dangling symlink (target gone) is repointed without --force =="
+scenario dangling
+mkdir -p "$(dirname "$MEM")"
+ln -s "$WORK/dangling/no-such-target" "$MEM"
+run_setup
+check "exit 0" '[ "$RC" -eq 0 ]'
+check "repointed to durable and says it was dangling" '[ "$(cd "$MEM" && pwd -P)" = "$(cd "$DUR" && pwd -P)" ] && printf "%s" "$OUT" | grep -q "symlink was dangling"'
+
+echo "== 4d. a link whose target exists but cannot be entered is NOT treated as dangling =="
+scenario unenterable
+mkdir -p "$(dirname "$MEM")" "$WORK/unenterable"
+printf 'a file, not a dir\n' > "$WORK/unenterable/notes.txt"
+ln -s "$WORK/unenterable/notes.txt" "$MEM"    # `cd` fails, yet something is there
+run_setup
+check "exit 0 with the warning, link left alone" '[ "$RC" -eq 0 ] && printf "%s" "$OUT" | grep -q "WARNING: memory symlink points to" && [ "$(readlink "$MEM")" = "$WORK/unenterable/notes.txt" ]'
+check "not reported as dangling" '! printf "%s" "$OUT" | grep -q "was dangling"'
+
+echo "== 4c. a harness dir holding a non-regular entry is refused, untouched =="
+scenario nonregular
+mkdir -p "$MEM"
+printf 'note\n' > "$MEM/a.md"
+ln -s "$MEM/a.md" "$MEM/alias.md"
+run_setup
+check "exit non-zero" '[ "$RC" -ne 0 ]'
+check "names the entry and leaves the dir" 'printf "%s" "$OUT" | grep -q "not regular files" && printf "%s" "$OUT" | grep -q "alias.md" && [ -d "$MEM" ] && [ ! -L "$MEM" ] && [ -f "$MEM/a.md" ]'
+check "no staging dir created" '[ -z "$(ls -d "$WS/.context/.memory-migrate."* 2>/dev/null)" ]'
+
+echo "== 5. identity keys read with POSIX grep =="
+scenario identity
+printf '{"env": {"WORKSPACE_USER": "Some One", "WORKSPACE_GITHUB_LOGIN": "", "WORKSPACE_TZ": "UTC"}}\n' > "$WS/.claude/settings.local.json"
+run_setup
+check "set / NOT SET reported per key" 'printf "%s" "$OUT" | grep -q "WORKSPACE_USER: set" && printf "%s" "$OUT" | grep -q "WORKSPACE_GITHUB_LOGIN: NOT SET" && printf "%s" "$OUT" | grep -q "WORKSPACE_TZ: set"'
+
+echo "== 6. a broken env store fails the step loudly =="
+scenario broken
+mkdir -p "$WS/.context/reference/env"
+printf '{not json' > "$WS/.context/reference/env/config.json"
+run_setup
+check "exit non-zero" '[ "$RC" -ne 0 ]'
+check "one-line cause, no traceback" 'printf "%s" "$OUT" | grep -q "invalid JSON" && ! printf "%s" "$OUT" | grep -q Traceback'
+
+echo "== 7. housekeeping: the kit's __pycache__ dirs and empty leftover dirs are swept, the workspace is not touched (#78) =="
+scenario leftover
+mkdir -p "$WS/.claude/old-template/templates" "$WS/.claude/skills/gone-skill/__pycache__" "$WS/keep-empty"
+printf 'x' > "$WS/.claude/skills/gone-skill/__pycache__/x.pyc"
+run_setup
+check "exit 0" '[ "$RC" -eq 0 ]'
+check "empty leftover dirs and the bytecode cache are gone" '[ ! -e "$WS/.claude/old-template" ] && [ ! -e "$WS/.claude/skills/gone-skill" ] && [ -z "$(find "$WS/.claude" -name __pycache__ 2>/dev/null)" ]'
+check "an empty dir in the workspace itself stays" '[ -d "$WS/keep-empty" ]'
+
+echo "== 8. --personal: the zero-config GitHub-only path fills the store and the identity files, no questions =="
+scenario personal
+mkdir -p "$WORK/fakegh"
+cat > "$WORK/fakegh/gh" <<'GH'
+#!/bin/sh
+case "$*" in
+  *"api user"*) echo '{"login":"octo-tester","name":"Octo Tester"}' ;;
+  *"repo list"*) printf 'octo-tester/widgets\n' ;;
+  *"auth token"*) echo placeholder-token ;;
+  *) exit 1 ;;
+esac
+GH
+chmod +x "$WORK/fakegh/gh"
+set +e
+OUT="$(cd "$WS" && HOME="$HOME_DIR" PROJECTS="$WS" PATH="$WORK/fakegh:$PATH" sh "$WS/.claude/setup.sh" --personal 2>&1)"; RC=$?
+set -e
+check "exit 0" '[ "$RC" -eq 0 ]'
+check "tracker is GitHub issues, environment named after the login, every system off" 'python3 -c "
+import json,sys; c=json.load(open(sys.argv[1])); sys.exit(0 if c[\"tracker\"][\"kind\"]==\"github\" and c[\"environment\"]==\"octo-tester\" and not any(c[\"systems\"].values()) else 1)" "$WS/.context/reference/env/config.json"'
+check "identity written into settings.local.json and the pr-review config" 'grep -q "\"WORKSPACE_GITHUB_LOGIN\": \"octo-tester\"" "$WS/.claude/settings.local.json" && grep -q "\"login\": \"octo-tester\"" "$WS/.context/state/pr-review/config.json"'
+check "report says every identity key is set" 'printf "%s" "$OUT" | grep -q "WORKSPACE_GITHUB_LOGIN: set" && ! printf "%s" "$OUT" | grep -q "NOT SET"'
+check "kit-verify accepts the store it wrote" '(cd "$WS/.claude" && CONTEXT_ROOT="$WS/.context" python3 context-db/bin/kit_verify.py >/dev/null 2>&1)'
+check "idempotent: a second --personal run rewrites nothing" 'OUT="$(cd "$WS" && HOME="$HOME_DIR" PROJECTS="$WS" PATH="$WORK/fakegh:$PATH" sh "$WS/.claude/setup.sh" --personal 2>&1)" && printf "%s" "$OUT" | grep -q "environment already named"'
+check "--help names --personal" 'run_setup --help; printf "%s" "$OUT" | grep -q -- "--personal"'
+
+echo "== 9. run from a plugin-style dir (not .claude/): the workspace root is CLAUDE_PROJECT_DIR, else the cwd =="
+scenario plugin
+mv "$WS/.claude" "$WORK/plugin/cache-kit" 2>/dev/null || { mkdir -p "$WORK/plugin"; mv "$WS/.claude" "$WORK/plugin/cache-kit"; }
+touch "$WORK/plugin/stamp"; sleep 1  # anything below the plugin dir newer than this was written by setup.sh
+set +e
+OUT="$(cd "$WS" && HOME="$HOME_DIR" PROJECTS='' CLAUDE_PROJECT_DIR='' sh "$WORK/plugin/cache-kit/setup.sh" 2>&1)"; RC=$?
+set -e
+check "exit 0" '[ "$RC" -eq 0 ]'
+check "store and files land in the cwd, not beside the plugin" '[ -f "$WS/.context/reference/env/config.json" ] && [ -f "$WS/CLAUDE.md" ] && [ ! -e "$WORK/plugin/.context" ]'
+check "settings.local.json is seeded under <root>/.claude/, nothing is written below the plugin dir" '[ -f "$WS/.claude/settings.local.json" ] && [ ! -e "$WORK/plugin/cache-kit/settings.local.json" ] && [ -z "$(find "$WORK/plugin/cache-kit" -type f -newer "$WORK/plugin/stamp" -not -path "*/__pycache__*" 2>/dev/null)" ]'
+mkdir -p "$WORK/plugin/proj"
+set +e
+OUT="$(cd "$WORK" && HOME="$HOME_DIR" PROJECTS='' CLAUDE_PROJECT_DIR="$WORK/plugin/proj" sh "$WORK/plugin/cache-kit/setup.sh" 2>&1)"; RC=$?
+set -e
+check "CLAUDE_PROJECT_DIR wins over the cwd" '[ "$RC" -eq 0 ] && [ -f "$WORK/plugin/proj/.context/reference/env/config.json" ] && [ ! -e "$WORK/.context" ]'
+check "settings.local.json follows the project dir" '[ -f "$WORK/plugin/proj/.claude/settings.local.json" ] && [ ! -e "$WORK/plugin/cache-kit/settings.local.json" ]'
+check "no git-ignore warning for a project that is not a git repo" '! printf "%s" "$OUT" | grep -q "not git-ignored"'
+mkdir -p "$WORK/plugin/repo" && git -C "$WORK/plugin/repo" init -q
+set +e
+OUT="$(cd "$WORK" && HOME="$HOME_DIR" PROJECTS='' CLAUDE_PROJECT_DIR="$WORK/plugin/repo" sh "$WORK/plugin/cache-kit/setup.sh" 2>&1)"; RC=$?
+set -e
+check "a git project that does not ignore the file gets one warning naming it" '[ "$RC" -eq 0 ] && printf "%s" "$OUT" | grep -q "settings.local.json is not git-ignored"'
+printf ".claude/settings.local.json\n" > "$WORK/plugin/repo/.gitignore"
+set +e
+OUT="$(cd "$WORK" && HOME="$HOME_DIR" PROJECTS='' CLAUDE_PROJECT_DIR="$WORK/plugin/repo" sh "$WORK/plugin/cache-kit/setup.sh" 2>&1)"; RC=$?
+set -e
+check "an ignored file gets no warning" '[ "$RC" -eq 0 ] && ! printf "%s" "$OUT" | grep -q "not git-ignored"'
+
+echo "== 10. seeds vs templates (#79): a copy older than its template's last commit is reported; --refresh-seeds prints the diff =="
+scenario seeds
+run_setup
+check "first run: no stale seed" '! printf "%s" "$OUT" | grep -q "predate their template"'
+git -C "$WS/.claude" init -q 2>/dev/null && git -C "$WS/.claude" add -A >/dev/null 2>&1 && git -C "$WS/.claude" -c user.email=t@example.com -c user.name=t commit -q -m seed >/dev/null 2>&1
+# the copies were seeded before that commit; make them "current" so only the one we back-date counts as stale
+touch "$WS/.context/README.md" "$WS/.context/reference/environment.md" "$WS/CLAUDE.md" "$WS/.context/self-assessment/README.md"
+touch -t "200101010"000 "$WS/.context/README.md"  # 12 digits split so no scanner reads a timestamp as an account id
+printf '\n<!-- template fix -->\n' >> "$WS/.claude/context-db/context-README.template.md"
+git -C "$WS/.claude" add -A >/dev/null 2>&1 && git -C "$WS/.claude" -c user.email=t@example.com -c user.name=t commit -q -m fix >/dev/null 2>&1
+run_setup
+check "a stale seed is one hint line, the copy is not touched" 'printf "%s" "$OUT" | grep -q "1 seeded file(s) predate their template" && ! grep -q "template fix" "$WS/.context/README.md"'
+run_setup --refresh-seeds
+check "--refresh-seeds names the pair and prints the diff" 'printf "%s" "$OUT" | grep -q "seed .context/README.md predates its template context-db/context-README.template.md" && printf "%s" "$OUT" | grep -q "+<!-- template fix -->"'
+check "--help names --refresh-seeds" 'run_setup --help; printf "%s" "$OUT" | grep -q -- "--refresh-seeds"'
+
+echo "== 11. the home directory is never the workspace root (#168) =="
+scenario homeroot
+set +e
+OUT="$(cd "$WS" && HOME="$WS" PROJECTS="$WS" sh "$WS/.claude/setup.sh" 2>&1)"; RC=$?
+set -e
+check "setup.sh refuses \$HOME as the root with exit 2 and creates nothing" '[ "$RC" -eq 2 ] && printf "%s" "$OUT" | grep -q "refusing the home directory" && [ ! -d "$WS/.context" ]'
+
+echo
+if [ "$fails" -eq 0 ]; then echo "setup.sh scenarios: all passed"; else echo "setup.sh scenarios: $fails FAILED" >&2; exit 1; fi

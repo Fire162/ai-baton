@@ -1,0 +1,327 @@
+{
+"rows": [
+{
+"d": "2026-01-05",
+"model": "claude-fable-5-1",
+"usd": 521.63,
+"inp": 2088026,
+"cached": 198362451,
+"cwrite": 8352103,
+"outp": 482235,
+"billed": true
+},
+{
+"d": "2026-01-05",
+"model": "claude-sonnet-5",
+"usd": 2.1,
+"inp": 626388,
+"cached": 0,
+"cwrite": 0,
+"outp": 14914,
+"billed": true
+},
+{
+"d": "2026-01-06",
+"model": "claude-fable-5-1",
+"usd": 534.81,
+"inp": 2140766,
+"cached": 203372694,
+"cwrite": 8563060,
+"outp": 494415,
+"billed": true
+},
+{
+"d": "2026-01-06",
+"model": "claude-sonnet-5",
+"usd": 2.16,
+"inp": 642222,
+"cached": 0,
+"cwrite": 0,
+"outp": 15291,
+"billed": true
+},
+{
+"d": "2026-01-07",
+"model": "claude-fable-5-1",
+"usd": 495.45,
+"inp": 1983232,
+"cached": 188407002,
+"cwrite": 7932926,
+"outp": 458033,
+"billed": true
+},
+{
+"d": "2026-01-07",
+"model": "claude-sonnet-5",
+"usd": 2.0,
+"inp": 594930,
+"cached": 0,
+"cwrite": 0,
+"outp": 14165,
+"billed": true
+},
+{
+"d": "2026-01-08",
+"model": "claude-fable-5-1",
+"usd": 434.36,
+"inp": 1738691,
+"cached": 165175626,
+"cwrite": 6954763,
+"outp": 401555,
+"billed": true
+},
+{
+"d": "2026-01-08",
+"model": "claude-sonnet-5",
+"usd": 1.75,
+"inp": 521598,
+"cached": 0,
+"cwrite": 0,
+"outp": 12419,
+"billed": true
+},
+{
+"d": "2026-01-09",
+"model": "claude-fable-5-1",
+"usd": 516.8,
+"inp": 2068685,
+"cached": 196525056,
+"cwrite": 8274739,
+"outp": 477768,
+"billed": true
+},
+{
+"d": "2026-01-09",
+"model": "claude-sonnet-5",
+"usd": 2.08,
+"inp": 620592,
+"cached": 0,
+"cwrite": 0,
+"outp": 14776,
+"billed": true
+},
+{
+"d": "2026-01-11",
+"model": "claude-fable-5-1",
+"usd": 115.19,
+"inp": 461093,
+"cached": 43803816,
+"cwrite": 1844371,
+"outp": 106491,
+"billed": true
+},
+{
+"d": "2026-01-11",
+"model": "claude-sonnet-5",
+"usd": 0.46,
+"inp": 138306,
+"cached": 0,
+"cwrite": 0,
+"outp": 3293,
+"billed": true
+},
+{
+"d": "2026-01-12",
+"model": "claude-fable-5-1",
+"usd": 587.07,
+"inp": 2349968,
+"cached": 223246884,
+"cwrite": 9399868,
+"outp": 542731,
+"billed": true
+},
+{
+"d": "2026-01-12",
+"model": "claude-sonnet-5",
+"usd": 2.37,
+"inp": 704970,
+"cached": 0,
+"cwrite": 0,
+"outp": 16785,
+"billed": true
+},
+{
+"d": "2026-01-13",
+"model": "claude-fable-5-1",
+"usd": 665.17,
+"inp": 2662582,
+"cached": 252945252,
+"cwrite": 10650326,
+"outp": 614930,
+"billed": true
+},
+{
+"d": "2026-01-13",
+"model": "claude-sonnet-5",
+"usd": 2.68,
+"inp": 798756,
+"cached": 0,
+"cwrite": 0,
+"outp": 19018,
+"billed": true
+},
+{
+"d": "2026-01-14",
+"model": "claude-fable-5-1",
+"usd": 560.98,
+"inp": 2245530,
+"cached": 213325350,
+"cwrite": 8982120,
+"outp": 518611,
+"billed": true
+},
+{
+"d": "2026-01-14",
+"model": "claude-sonnet-5",
+"usd": 2.26,
+"inp": 673638,
+"cached": 0,
+"cwrite": 0,
+"outp": 16039,
+"billed": true
+},
+{
+"d": "2026-01-15",
+"model": "claude-fable-5-1",
+"usd": 552.44,
+"inp": 2211338,
+"cached": 210077091,
+"cwrite": 8845351,
+"outp": 510714,
+"billed": true
+},
+{
+"d": "2026-01-15",
+"model": "claude-sonnet-5",
+"usd": 2.23,
+"inp": 663390,
+"cached": 0,
+"cwrite": 0,
+"outp": 15795,
+"billed": true
+},
+{
+"d": "2026-01-16",
+"model": "claude-fable-5-1",
+"usd": 684.1,
+"inp": 2738358,
+"cached": 260144010,
+"cwrite": 10953432,
+"outp": 632431,
+"billed": true
+},
+{
+"d": "2026-01-16",
+"model": "claude-sonnet-5",
+"usd": 2.76,
+"inp": 821478,
+"cached": 0,
+"cwrite": 0,
+"outp": 19559,
+"billed": true
+},
+{
+"d": "2026-01-19",
+"model": "claude-fable-5-1",
+"usd": 307.78,
+"inp": 1099956,
+"cached": 104495696,
+"cwrite": 4399818,
+"outp": 693818,
+"billed": true
+},
+{
+"d": "2026-01-19",
+"model": "claude-sonnet-5",
+"usd": 8.22,
+"inp": 1979913,
+"cached": 0,
+"cwrite": 0,
+"outp": 152301,
+"billed": true
+},
+{
+"d": "2026-01-20",
+"model": "claude-fable-5-1",
+"usd": 229.37,
+"inp": 819754,
+"cached": 77876630,
+"cwrite": 3279016,
+"outp": 517076,
+"billed": true
+},
+{
+"d": "2026-01-20",
+"model": "claude-sonnet-5",
+"usd": 6.13,
+"inp": 1475552,
+"cached": 0,
+"cwrite": 0,
+"outp": 113504,
+"billed": true
+},
+{
+"d": "2026-01-21",
+"model": "claude-fable-5-1",
+"usd": 316.5,
+"inp": 1131146,
+"cached": 107458832,
+"cwrite": 4524582,
+"outp": 713492,
+"billed": true
+},
+{
+"d": "2026-01-21",
+"model": "claude-sonnet-5",
+"usd": 8.46,
+"inp": 2036060,
+"cached": 0,
+"cwrite": 0,
+"outp": 156620,
+"billed": true
+},
+{
+"d": "2026-01-22",
+"model": "claude-fable-5-1",
+"usd": 338.66,
+"inp": 1210328,
+"cached": 114981093,
+"cwrite": 4841309,
+"outp": 763438,
+"billed": true
+},
+{
+"d": "2026-01-22",
+"model": "claude-sonnet-5",
+"usd": 9.05,
+"inp": 2178579,
+"cached": 0,
+"cwrite": 0,
+"outp": 167583,
+"billed": true
+},
+{
+"d": "2026-01-23",
+"model": "claude-fable-5-1",
+"usd": 226.76,
+"inp": 810402,
+"cached": 76988171,
+"cwrite": 3241607,
+"outp": 511177,
+"billed": true
+},
+{
+"d": "2026-01-23",
+"model": "claude-sonnet-5",
+"usd": 6.06,
+"inp": 1458717,
+"cached": 0,
+"cwrite": 0,
+"outp": 112209,
+"billed": true
+}
+],
+"source": {
+"fixture": "synthetic \u2014 three weeks, two models, routing change in week 3"
+}
+}

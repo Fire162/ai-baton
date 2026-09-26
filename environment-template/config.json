@@ -1,0 +1,148 @@
+{
+  "environment": "<name>",
+  "_comment": "Shape of the env store's config.json (one per machine, never in git). Every key is read by a skill or engine script; keep the shape, change the values. Blank one: `kb.py init --blank`; set values: `kb.py config-set <dotted.key> <value>`; checklist: docs/new-environment.md.",
+  "domains": [
+    "<area-a>",
+    "<area-b>"
+  ],
+  "tracker": {
+    "kind": "jira | github | linear | none",
+    "site": "<jira site host, e.g. acme.atlassian.net — jira only>",
+    "project": "<jira project key — jira only>",
+    "board_sprint_prefix": "<sprint name prefix to match on, jira only, or empty>",
+    "sprint_field": "<customfield_… for Sprint — jira only, or empty>",
+    "unplanned_field": "<customfield_… for the Unplanned flag — jira only, or empty>",
+    "repos": [
+      "<owner/repo tracked with GitHub issues — github only>"
+    ],
+    "key_regex": "<regex with ONE capture group matching a ticket key in free text; jira: \\b((?:KEY)-\\d+)\\b — github: (?:^|[^\\w/])#(\\d+)\\b>",
+    "url_template": "<https://…/{key} — github: https://github.com/{repo}/issues/{key}>",
+    "transitions": {
+      "in_review": 0,
+      "done": 0,
+      "wont_do": 0,
+      "cancelled": 0
+    },
+    "close_reasons": {
+      "done": "completed",
+      "wont_do": "not planned",
+      "cancelled": "not planned"
+    },
+    "mcp_tools": {
+      "create": "<MCP tool name suffix>",
+      "comment": "<…>",
+      "transition": "<…>",
+      "search": "<… the tracker's issue-search tool, used by cost-report>"
+    }
+  },
+  "github": {
+    "org": "<github org or user the team's repos live under>",
+    "review_bot": "<login of the AI review bot that posts a verdict on PRs, or empty>",
+    "bots": [
+      "dependabot[bot]",
+      "renovate[bot]",
+      "github-actions[bot]"
+    ],
+    "signed_commits": false,
+    "sandbox_token_prefix": "<e.g. GH_TOKEN=dummy when a sandbox proxy injects the real token; empty otherwise>",
+    "owner_teams": [
+      "<CODEOWNERS teams whose review requests count as yours>"
+    ],
+    "display_names": {
+      "<login>": "<First name>"
+    }
+  },
+  "slack": {
+    "enabled": false,
+    "domain": "<acme.slack.com>",
+    "channels": {
+      "<name>": "<C… channel id>"
+    },
+    "repo_channels": {
+      "<owner/repo>": "<channel name from channels>"
+    }
+  },
+  "datalake": {
+    "kind": "",
+    "_comment": "kind: warehouse vendor (snowflake | bigquery | …) — selects the datalake-<vendor> discovery manifest; empty when systems.datalake is false."
+  },
+  "labels": {
+    "shared": [
+      "bug",
+      "documentation",
+      "enhancement"
+    ]
+  },
+  "diagrams": {
+    "_comment": "repos.<owner/repo>.facets.<facet>: [globs] and .ignore: [globs] — per-repo overlays for pr-open's diagram-plan.py; overlay wins over the core defaults. Optional.",
+    "repos": {
+      "<owner/repo>": {
+        "facets": {
+          "<facet>": [
+            "<glob, e.g. assets/pipeline/**>"
+          ]
+        },
+        "ignore": [
+          "<glob never counted, e.g. generated badges>"
+        ]
+      }
+    }
+  },
+  "commits": {
+    "_comment": "default: conventional | ticket-key | free (kit default conventional); repos.<owner/repo>: per-repo override, set as one object with `kb.py config-set commits '{…}'`. A repo's own .claude/commit-style marker or commitlint config wins. Spec: docs/commit-style.md.",
+    "default": "conventional",
+    "repos": {}
+  },
+  "self_assessment": {
+    "sources": [
+      "github",
+      "jira",
+      "meetings",
+      "1on1"
+    ],
+    "report": "lattice | week-file | <other>",
+    "scope": "<one sentence: what work counts in this environment>",
+    "ledger": false,
+    "ledger_url": "",
+    "report_url": ""
+  },
+  "cost": {
+    "_comment": "cost-report skill; optional (absent = private mode). spend_table/email/filters/columns: the warehouse spend table at grain user × model × day (org mode, needs systems.datalake); extra_repos: owner/repo outside github.org that count as the user's work; phases: named before/after windows. Set as one object with `kb.py config-set cost '{…}'`.",
+    "spend_table": "<db.schema.table or empty>",
+    "email": "<the user's email as it appears in spend_table>",
+    "filters": "<SQL predicate selecting the Claude Code rows, or \"\" for none>",
+    "columns": {
+      "date": "<date column>",
+      "email": "<email column>",
+      "model": "<model column>",
+      "cost": "<cost column>",
+      "input": "<input tokens column>",
+      "output": "<output tokens column>",
+      "cache_read": "<cache read tokens column>",
+      "cache_write": "<cache write tokens column>"
+    },
+    "extra_repos": [
+      "<owner/repo outside github.org, e.g. the kit repo>"
+    ],
+    "phases": [
+      {
+        "name": "<before>",
+        "start": "YYYY-MM-DD",
+        "end": "YYYY-MM-DD"
+      }
+    ]
+  },
+  "systems": {
+    "jira": false,
+    "slack": false,
+    "notion": false,
+    "datalake": false,
+    "airflow": false,
+    "dbt": false,
+    "aws_sso": false,
+    "incident_io": false,
+    "lattice": false,
+    "signed_commits": false
+  },
+  "tz_default": "UTC"
+}

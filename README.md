@@ -1,0 +1,117 @@
+# bAIton
+
+**`ai-baton` — a workspace kit for Claude Code: every session gets the same skills, rules and memory,
+and hands off to the next.**
+
+[![CI](https://github.com/MdaaaaO/ai-baton/actions/workflows/ci.yml/badge.svg)](https://github.com/MdaaaaO/ai-baton/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/MdaaaaO/ai-baton)](https://github.com/MdaaaaO/ai-baton/releases)
+[![Conventional Commits](https://img.shields.io/badge/Conventional_Commits-1.0.0-FE5196)](https://www.conventionalcommits.org)
+[![Claude Code plugin](https://img.shields.io/badge/Claude_Code-plugin-D97757)](docs/packaging.md)
+
+Clone it into the directory your sessions run in. You get a set of skills for PRs, tickets, sessions and
+docs, a small markdown database for what the sessions learn, and one store for the values that differ between
+machines. The kit contains no names, ids or org settings, so every machine and every teammate uses it unchanged.
+
+```sh
+cd ~/Projects      # your workspace root: the directory that holds your repos
+git clone https://github.com/MdaaaaO/ai-baton.git .claude && sh .claude/setup.sh --personal
+# restart Claude Code, then in the first session:
+/kit-health
+```
+
+> **Never clone into your home directory.** `~/.claude` is Claude Code's own config directory; `setup.sh` refuses
+> `$HOME` as the workspace root. Moving the kit out of `.claude/` is tracked in [#168](https://github.com/MdaaaaO/ai-baton/issues/168).
+
+## Why a kit
+
+| You have | What breaks | What the kit adds |
+|---|---|---|
+| A `CLAUDE.md` in each repo | Rules drift from repo to repo. Nothing is shared across repos. | One `WORKSPACE.md` that every session imports |
+| A skills plugin | Skills hardcode your org, channels and ids, or ask you for them every time | An env fact store: a fact is found once, then read everywhere |
+| Nothing | Each session starts cold and forgets what the last one learned | `.context/`, an indexed markdown DB, plus a session registry and handoff docs |
+
+Use a plain `CLAUDE.md` when you have one repo and work alone. The kit pays off once you have several repos,
+several machines or several people.
+
+## How it works
+
+1. Your root `CLAUDE.md` imports `.claude/WORKSPACE.md` (the shared rules) and `.context/reference/environment.md`
+   (your environment's prose).
+2. Only the skills' names and descriptions load into a session. A skill's body loads when it runs.
+3. A skill that needs a value, such as a channel id, reads it from the env store in `.context/reference/env/`. It
+   discovers a missing value once and writes it back.
+4. What sessions learn goes into `.context/` as rows of a markdown DB with a generated index.
+5. Sessions register in a live registry and hand off through one context doc per initiative.
+6. Kit changes are PR-only. `make claude_sync` fast-forwards every machine to the merged `main`.
+
+## Install
+
+Prerequisites: [Claude Code](https://claude.com/claude-code), `git`, `python3`, and `gh` logged in.
+
+### Quick start: a GitHub-only machine
+
+This setup needs no questions. Run the command in the code block above. `--personal` takes your login and name
+from `gh`, your repos from the clones under the workspace root, and the timezone from the OS. It sets every
+`systems.*` flag to false. A skill that needs Jira, Slack or a warehouse stops with one "not applicable here"
+line. It is safe to re-run.
+
+### Full path: a tracker, chat or warehouse
+
+Paste the install prompt from [`docs/new-environment.md`](docs/new-environment.md) into Claude Code. It asks once
+for your identity and the structural switches, then runs the same `setup.sh`.
+
+### As a Claude Code plugin
+
+```sh
+claude plugin marketplace add MdaaaaO/ai-baton
+claude plugin install ai-baton@ai-baton-kit
+```
+
+Then run `/plugin configure ai-baton` to enter your identity. A plugin cannot create the workspace files
+(`.context/`, the root `CLAUDE.md`, `Makefile`). Run `setup.sh` from your workspace root for those.
+[`docs/packaging.md`](docs/packaging.md) compares the two paths.
+
+### Keep it current
+
+```sh
+make claude_sync          # or: sh .claude/sync.sh
+```
+
+This only ever fast-forwards `main`. [`docs/sync.md`](docs/sync.md) explains the hooks and the guards.
+
+## What's inside
+
+| Category | Skills |
+|---|---|
+| Sessions and knowledge | `session-register` · `session-handoff` · `env-init` · `kit-health` · `cost-report` · `self-assessment` |
+| Pull requests | `pr-open` · `pr-watch` · `pr-event-brief` · `pr-scan` · `pr-review` · `gh-cli` |
+| Tracker | `ticket-open` · `ticket-update` · `ticket-close` |
+| Docs | `repo-docs` |
+| Needs a system (`systems.*`) | `sign-queue` · `signed-git-commits` · `slack-draft` · `alerts-sweep` · `aws-sso-login` · `dbt-sqlfluff-fixes` · `notion-page-review` |
+
+It also ships three agents (`triage`, `review-runner`, `auto-runner`) and the `context-db/` engine
+(`make -C .claude/context-db help`). [`docs/skills.md`](docs/skills.md) describes each item in one line.
+
+## Documentation
+
+| Page | Read it for |
+|---|---|
+| [layout](docs/layout.md) | What every file and directory is |
+| [conventions](docs/conventions.md) | The six rules that keep the kit portable |
+| [architecture](docs/architecture.md) | One diagram: session → imports → skills → engine → context DB |
+| [env-facts](docs/env-facts.md) | The env fact store, `kb.py`, and how a skill resolves a fact |
+| [new-environment](docs/new-environment.md) | Setting up a machine with a tracker, chat or warehouse |
+| [loading](docs/loading.md) | What loads when, and the byte budgets |
+| [packaging](docs/packaging.md) | Plugin versus clone |
+| [sync](docs/sync.md) | How the kit moves between machines |
+| [authoring](docs/authoring.md) | The checklist for a new skill or agent |
+| [engine-cli](docs/engine-cli.md) | Every engine command and flag |
+| [commit-style](docs/commit-style.md) · [REVIEW](docs/REVIEW.md) · [glossary](docs/glossary.md) · [CHANGELOG](docs/CHANGELOG.md) | Contributor reference |
+
+## Contributing
+
+Issues and PRs are welcome. [`CONTRIBUTING.md`](CONTRIBUTING.md) starts with the short version.
+
+## License
+
+[MIT](LICENSE).

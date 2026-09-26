@@ -1,0 +1,52 @@
+{
+  "name": "ai-baton",
+  "displayName": "Claude Code workspace kit",
+  "version": "0.1.0",
+  "description": "Environment-portable Claude Code kit: capability-gated skills and agents, an env fact store, a markdown context DB with a session registry, and a self-audit — one skill set for every machine.",
+  "author": {
+    "name": "ai-baton maintainers",
+    "url": "https://github.com/MdaaaaO/ai-baton"
+  },
+  "homepage": "https://github.com/MdaaaaO/ai-baton",
+  "repository": "https://github.com/MdaaaaO/ai-baton",
+  "keywords": [
+    "workspace",
+    "skills",
+    "env-facts",
+    "context-db",
+    "session-registry",
+    "kit-health"
+  ],
+  "userConfig": {
+    "user_name": {
+      "type": "string",
+      "title": "Your name",
+      "description": "How skills address and stamp you (WORKSPACE_USER): sign-queue --by, the self-assessment ledger eyebrow. Never written into the kit.",
+      "required": true
+    },
+    "github_login": {
+      "type": "string",
+      "title": "GitHub login",
+      "description": "Your GitHub login (WORKSPACE_GITHUB_LOGIN): pr-watch drops your own events, cost-report and self-assessment query author:<login>.",
+      "required": true
+    },
+    "tz": {
+      "type": "string",
+      "title": "Timezone (IANA)",
+      "description": "The zone timestamps render in (WORKSPACE_TZ), e.g. a Region/City name. UTC when empty or unknown.",
+      "default": "UTC"
+    },
+    "slack_self_dm": {
+      "type": "string",
+      "title": "Chat self-DM channel id",
+      "description": "Your own chat DM channel id (WORKSPACE_SLACK_SELF_DM), where a draft skill parks text for you. Optional; needs systems.slack in the env store.",
+      "sensitive": true
+    },
+    "slack_lattice_dm": {
+      "type": "string",
+      "title": "Performance-review bot DM channel id",
+      "description": "The chat DM your performance-review tool's bot posts in (WORKSPACE_SLACK_LATTICE_DM), read by the self-assessment skill. Optional; needs systems.slack in the env store.",
+      "sensitive": true
+    }
+  }
+}

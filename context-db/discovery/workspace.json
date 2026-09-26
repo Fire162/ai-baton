@@ -1,0 +1,66 @@
+{
+  "system": "workspace",
+  "facts": [
+    {
+      "key": "environment",
+      "target": "config",
+      "tool": "user",
+      "args": {},
+      "verify": "a lowercase slug naming this machine's environment (`kit_profile.py name` echoes it)",
+      "ttl_days": 0,
+      "purpose": "the environment's name"
+    },
+    {
+      "key": "slack.enabled",
+      "target": "config",
+      "tool": "roster",
+      "args": {
+        "tool": "slack_search_channels"
+      },
+      "verify": "the tool is callable in this session (a Slack MCP connector is attached)",
+      "ttl_days": 0,
+      "purpose": "Slack drafts/reads are possible here",
+      "note": "lives here, not in slack.json, because slack.json requires systems.slack — the flag this fact informs; set systems.slack to the same answer"
+    },
+    {
+      "key": "tz_default",
+      "target": "config",
+      "tool": "settings",
+      "args": {
+        "key": "WORKSPACE_TZ"
+      },
+      "verify": "an IANA zone name (`python3 -c 'import zoneinfo; zoneinfo.ZoneInfo(\"<tz>\")'` succeeds)",
+      "ttl_days": 0,
+      "purpose": "the timezone dates render in"
+    },
+    {
+      "key": "domains",
+      "target": "config",
+      "tool": "cli",
+      "args": {
+        "cmd": "ls -d .context/*/ | xargs -n1 basename"
+      },
+      "verify": "each listed folder is a real `.context/` domain that is not one of the core ones (reference, repos, pr-reviews, meetings, 1on1, self-assessment, on-call, archive, sessions)",
+      "ttl_days": 0,
+      "purpose": "extra `.context/` domain folders this environment adds"
+    },
+    {
+      "key": "tracker.kind",
+      "target": "config",
+      "tool": "user",
+      "verify": "one of jira | github | none; an Atlassian MCP tool in this session's roster (getJiraIssue) suggests jira, `gh` alone suggests github",
+      "ttl_days": 0,
+      "purpose": "which ticket adapter the ticket-* skills run",
+      "note": "decided before any tracker-* manifest applies (their `when` reads this key) — never derived from a tool call, so the choice cannot be circular"
+    },
+    {
+      "key": "datalake.kind",
+      "target": "config",
+      "tool": "user",
+      "verify": "the vendor whose connector is attached (snowflake | bigquery | databricks | …); empty when systems.datalake is false",
+      "ttl_days": 0,
+      "purpose": "which warehouse the datalake-* manifests and the SQL in cost-report speak",
+      "note": "a `sql_exec_tool` in the roster names one vendor's connector, not the vendor — ask"
+    }
+  ]
+}

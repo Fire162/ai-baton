@@ -1,0 +1,12 @@
+{
+  "system": "airflow",
+  "requires": "airflow",
+  "facts": [
+    {"key": "airflow.path alerts-state", "target": "row", "tool": "user", "args": {},
+     "verify": "the file exists under the on-call domain of `.context/` and holds one chat-message timestamp (the alerts channel's last swept message)",
+     "ttl_days": 0, "purpose": "the alerts-sweep last-swept-ts file (workspace-relative path)"},
+    {"key": "airflow.path alerts-kb", "target": "row", "tool": "user", "args": {},
+     "verify": "the doc exists under the on-call domain of `.context/` and has one section per alert pattern",
+     "ttl_days": 0, "purpose": "the alerts-sweep pattern KB (workspace-relative path)"}
+  ]
+}
