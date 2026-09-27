@@ -6,6 +6,7 @@ do not bump a version. The generated per-release log is the root [`CHANGELOG.md`
 merge date in UTC, as GitHub shows it — a shared file cannot carry one machine's zone. A removed
 skill or agent keeps its last version in git history: `git log --diff-filter=D -- skills/<name>` names the commit.
 
+- 2026-09-27 · **kit-health v34 · plugin.json** — an unknown display zone (`WORKSPACE_TZ` / the plugin option `tz`, e.g. `EDT`) is a § 4 warning naming its source, instead of a silent UTC fallback behind GREEN; the `/config` field says IANA Region/City, not an abbreviation (#22). Machines: set `tz` to a Region/City name.
 - 2026-09-27 · **kit_verify.py · frontmatter.py** — a unit whose frontmatter repeats a key (e.g. two `version:` under `metadata:`) or whose body repeats a numbered step (same number or same text in one list) fails kit-verify; the parser kept the last value silently, so a mis-resolved merge passed CI (#19). Machines: nothing to do.
 - 2026-09-26 · **kit-health v33** — on a plugin install § 6 lists the units changed since the last stamp from GitHub's compare API (`<stamp commit>...<installed commit>` of the kit repo), so the judgement pass has a list; offline, or a stamp commit the repo does not know, stays "unknown" with the reason (#13). Machines: nothing to do.
 - 2026-09-26 · **kit-health v32** — step 5 keeps one log per day and environment: a second run that day (the re-run after a Fix) appends a `## Run <HH:MM>` section instead of failing at `new`, which refuses to clobber (#10). Machines: nothing to do.
