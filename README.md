@@ -77,6 +77,8 @@ applicable here" line. It is safe to re-run.
 On the plugin path the third line finds the plugin root through `claude plugin list --json` (the root moves on
 every update) and runs its `setup.sh`. That seeds `.context/` and the root `CLAUDE.md`, but no `Makefile` include:
 the plugin's own hook loads the shared rules. To set your identity without `gh`, run `/plugin configure ai-baton`.
+[`docs/plugin-setup.md`](docs/plugin-setup.md) walks the plugin path step by step, including updates and a switch
+from a clone.
 
 ### Full path: a tracker, chat or warehouse
 
@@ -116,6 +118,7 @@ It also ships three agents (`triage`, `review-runner`, `auto-runner`) and the `c
 | [architecture](docs/architecture.md) | One diagram: session → imports → skills → engine → context DB |
 | [env-facts](docs/env-facts.md) | The env fact store, `kb.py`, and how a skill resolves a fact |
 | [new-environment](docs/new-environment.md) | Setting up a machine with a tracker, chat or warehouse |
+| [plugin-setup](docs/plugin-setup.md) | The plugin install step by step, updating it, switching from a clone |
 | [loading](docs/loading.md) | What loads when, and the byte budgets |
 | [packaging](docs/packaging.md) | Plugin versus clone |
 | [sync](docs/sync.md) | How the kit moves between machines |

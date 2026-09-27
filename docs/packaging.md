@@ -10,6 +10,8 @@ workspace, the root `CLAUDE.md` imports, the root `Makefile` include, the git ho
 covers both: the kit is `$BATON` (§ Kit root), `WORKSPACE.md` arrives by import (clone) or hook (plugin) — § Installing
 — and each path has its own update flow (§ Updating).
 
+Setting up the plugin path, step by step: [`plugin-setup.md`](plugin-setup.md).
+
 ## Layout map
 
 | in the repo | plugin path (`claude plugin install`) | clone path (`git clone … .claude`) |
