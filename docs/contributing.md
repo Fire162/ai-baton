@@ -78,7 +78,9 @@ lines as the target, 500 the hard cap; `reference.md` / `references/` — ration
 on demand; `scripts/` — stdlib Python or POSIX shell; `README.md` — capability tier. Evals live **outside** the
 skill in `evals/<skill>-<case>/` (`prompt.md` + `graders/*.md`, the format `claude plugin eval` runs and
 `claude plugin eval init --bare` scaffolds; `evals/results/` is the runner's output and is not committed), so the
-installed skill stays lean. `docs/templates/skill/` (SKILL.md + README.md) and `docs/templates/evals/` are the
+installed skill stays lean. `make -C .claude/context-db eval-check` is the token-free gate on every PR (each suite
+≥ 10 cases, both kinds, every case loads); the token-spending run is `make … eval SKILL=<name>` or the manual `evals`
+workflow (`evals/README.md`). `docs/templates/skill/` (SKILL.md + README.md) and `docs/templates/evals/` are the
 scaffold: copy both, rename, fill the `<…>` marks. They live under `docs/`, not under `skills/` or `evals/`, because
 Claude Code loads every `skills/*/SKILL.md` and `claude plugin eval` runs every case under `evals/`.
 
@@ -205,8 +207,10 @@ with the migration notes a machine needs (§ Versioning).
 What `ci.yml` checks (all reproducible with `make -C .claude/context-db ci`): the env-free validator, kit-verify
 against a blank store, the unittest suite, the plugin manifests, `py_compile`, `bash -n`, `dash -n` for every
 `#!/bin/sh` script (setup.sh and sync.sh run under `sh`), `shellcheck -S warning`, the relative Markdown links
-(`check_links.py`), the tier-0 review gate (`review_gate.py`) and `kit-health --ci` (the leak scan on the blank
-store, no writes). Third-party actions are pinned by commit SHA and bumped by Dependabot.
+(`check_links.py`), the tier-0 review gate (`review_gate.py`), the eval suite's static check (`eval_check.py`, no
+tokens) and `kit-health --ci` (the leak scan on the blank store, no writes). Third-party actions are pinned by commit
+SHA and bumped by Dependabot. `evals.yml` — `claude plugin eval` on the `CLAUDE_CODE_OAUTH_TOKEN` secret — runs only
+by hand (`workflow_dispatch`, inputs `skill` and `models`), never on a pull request, so no PR's code meets the token.
 
 Every workflow runs on GitHub-hosted `ubuntu-latest` — free for a public repository, and GitHub's hardening guide
 says a self-hosted runner "should almost never be used for public repositories". A job triggered by a pull request
@@ -224,7 +228,7 @@ The engine has a stdlib `unittest` suite in `context-db/tests/` — `make -C .cl
 no install; a clone without an env store gets a throw-away blank one) — and CI runs it on every PR. It covers `kb.py`
 (the store: set/get/rm, renamed kinds, provenance and stale rows, config, migrate), `kit_verify.py` (frontmatter
 schema, env-store checks, `--stale`, `--no-env`), `gen_index.py` / `verify.py` / `new.sh` on a throw-away
-`CONTEXT_ROOT`, `gen_sessions.py`, `commit_style.py`, `session_stats.py` + `transcripts.py` on a synthetic
+`CONTEXT_ROOT`, `gen_sessions.py`, `commit_style.py`, `eval_check.py` (on a throw-away kit), `session_stats.py` + `transcripts.py` on a synthetic
 transcript, `frontmatter.py` + `migrate_frontmatter.py`, and the pure functions of `pr-review/scripts/trivial-check.py`
 and `pr-open/diagram-plan.py`, and the `pr-issue` parser (`.github/scripts/check-pr-issue.sh`, with a stub `gh`).
 
