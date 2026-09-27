@@ -17,6 +17,7 @@ repo (§ History).
   (`/env-init`, `NEEDS <fact>`), never through a form. Everything below is the full path; the quick start is the same
   machine with steps 2–4 done for you.
 - **Full path — a machine with a tracker, chat or warehouse:** the install prompt below, then the checklist.
+- **Plugin install** instead of a clone: [`plugin-setup.md`](plugin-setup.md), then the checklist from step 2.
 
 ## Install prompt — the full path (paste into Claude Code)
 

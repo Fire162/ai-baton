@@ -6,6 +6,8 @@ against it, and `userConfig` can carry identity (#116) — **and** the clone-int
 things that make it a *workspace* kit are conventions a plugin cannot install: the `.context/` DB beside the
 workspace, the root `CLAUDE.md` imports, the root `Makefile` include, the git hooks and the fast-forward sync.
 
+Setting up the plugin path, step by step: [`plugin-setup.md`](plugin-setup.md).
+
 ## Layout map
 
 | in the repo | plugin path (`claude plugin install`) | clone path (`git clone … .claude`) |
