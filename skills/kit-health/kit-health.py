@@ -203,7 +203,45 @@ def sec_kit(r: Report, stale: int) -> None:
               "there is no checkout to sync; env store up to date")
     else:
         r.add(OK, "kit", "sync: in step with origin, tree clean")
+    if plugin is not None:
+        cache_wiring(r, plugin)
     review_ratio(r)
+
+
+def cache_runtime(parts: tuple[str, ...]) -> bool:
+    """The plugin cache's own runtime files, never a hand edit: bytecode anywhere, Claude Code's top-level `.in_use/`
+    markers, and what `.gitignore` names at its own depth — the top-level `sign-queue/` queue (not the
+    `skills/sign-queue/` skill) and `evals/…/results/`."""
+    return ("__pycache__" in parts or parts[-1].endswith(".pyc") or parts[0] in (".in_use", "sign-queue")
+            or (parts[0] == "evals" and "results" in parts[1:3]))
+
+
+def cache_edits(kit: Path, updated: str, grace: int = 120) -> list[str] | None:
+    """Kit files in a plugin cache modified after Claude Code wrote the install (`updated`, the registry's ISO
+    `lastUpdated`) — a hand edit that `claude plugin update` would overwrite and no PR carries (#11). None when the
+    install time is unknown; runtime files (`cache_runtime`) are skipped. `grace` seconds absorb the unpack."""
+    try:
+        since = dt.datetime.fromisoformat(updated.replace("Z", "+00:00")).timestamp() + grace
+    except ValueError:
+        return None
+    out = []
+    for p in sorted(kit.rglob("*")):
+        parts = p.relative_to(kit).parts
+        if p.is_file() and not cache_runtime(parts) and p.stat().st_mtime > since:
+            out.append("/".join(parts))
+    return out
+
+
+def cache_wiring(r: Report, plugin: dict) -> None:
+    edits = cache_edits(KIT, plugin.get("updated", ""))
+    if edits:
+        r.add(WARN, "kit", f"plugin cache: {len(edits)} kit file(s) changed after the install ("
+              + ", ".join(f"`{e}`" for e in edits[:3]) + (", …" if len(edits) > 3 else "")
+              + ") — `claude plugin update` overwrites them: make the change in a kit checkout and open a PR (skill step 4)")
+    elif edits is not None:
+        r.add(OK, "kit", "plugin cache: no kit file changed since the install")
+    else:
+        r.raw("- plugin cache: edit check skipped — `installed_plugins.json` records no install time for this path")
 
 
 # ── review findings (#121) ────────────────────────────────
