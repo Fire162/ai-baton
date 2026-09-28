@@ -1,6 +1,6 @@
 # Troubleshooting — silent hooks, kit-health RED findings, uninstalling
 
-Both kit hooks are written to never fail loudly: a broken hook must not break the session. That means a real
+Every kit hook is written to never fail loudly: a broken hook must not break the session. That means a real
 failure produces no error dialog and no non-zero exit — only a line in the transcript, or nothing at all. This
 page says where to look, and how to remove the kit once you no longer want it.
 
@@ -40,6 +40,24 @@ see it. `sync.sh` does not rely on that output surfacing: it writes `.sync-statu
 the next `session-register` so a refused pull is never silent for long. `docs/sync.md` § What `sync.sh` does has
 the full state table; to see a failure immediately rather than at the next registration, run
 `sh $BATON/sync.sh` yourself from the workspace root.
+
+### ctx-store hooks (`PostToolUse`, `SessionStart` briefs — both install paths)
+
+`hooks/hooks.json` (plugin) and `settings.json` (clone) also run the ctx-store adapter,
+`context-db/bin/ctx_adapter.py` (`docs/engine-cli.md`), which calls ctx-store's `ctx` through its verbs only:
+
+| Event | Call |
+|---|---|
+| `PostToolUse` on `Write`/`Edit`/`MultiEdit`/`NotebookEdit` of a file under the content root | `ctx validate --changed --adopt`, synchronous; findings come back as the hook's `systemMessage` (a `ctx validate: …` line); any other failure except `NO_STORE`, a timeout included, comes back as `ctx validate did not run: <first error line>`, so validation never stops unnoticed |
+| the same, `async` | `ctx touch --session <session_id>`: the heartbeat of the registry row `session register` stamped with the harness session id |
+| `SessionStart` `startup`/`resume`/`clear` | `ctx brief --registry`, byte-budgeted, into the session's context |
+| `SessionStart` `compact` | `ctx brief --session <session_id>`, byte-budgeted |
+
+Each is a silent no-op (exit 0, no output) when ctx is not installed or no store is named or found, so a machine
+that has not adopted ctx-store sees nothing. The adapter names the store with `CTX_STORE` when set, else
+`--store <content root>`. To check it: `python3 $BATON/context-db/bin/ctx_adapter.py where` (exit 1 says what is
+missing), `… install` fetches the pinned tag, `KIT_CTX` points at another `ctx` (`docs/env-vars.md`). Changes made
+through `Bash` are not seen by the hook; the next hooked write's `validate --changed` picks them up.
 
 ## 2. Start here: `/kit-health`
 
@@ -90,6 +108,8 @@ Two artifacts are common to both modes:
 3. In the root `Makefile`, delete the line `include .claude/workspace.mk` — delete the file entirely when that
    was its only line.
 4. Remove the harness memory symlink (above).
+5. `rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/ai-baton-kit/ctx-store"` if you ran `ctx_adapter.py install` (the pinned
+   ctx-store copy lives outside the checkout).
 
 **Plugin** (`claude plugin install ai-baton@ai-baton-kit`):
 
@@ -102,5 +122,7 @@ Two artifacts are common to both modes:
    never imports `@.claude/WORKSPACE.md` — that came from the SessionStart hook at runtime, so there is no line
    on disk for it to leave behind).
 5. Remove the harness memory symlink (above).
+6. `rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/ai-baton-kit/ctx-store"` if you ran `ctx_adapter.py install` (the pinned
+   ctx-store copy lives outside the plugin cache).
 
 Either way, `/kit-health` won't run again once step 1 is done — there is nothing left to check.
