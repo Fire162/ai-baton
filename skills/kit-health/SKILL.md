@@ -19,7 +19,8 @@ A run proves the kit is sound (frontmatter, no environment value in a kit file, 
    and Read the echoed path (shell variables do not survive between tool calls). Exit 0 GREEN · 1 AMBER ·
    2 RED. Read-only: only `--stamp` writes. Sections 1–6 (kit, leaks, config, machine, engine, stamp); § 1 names
    the install mode (warns when it differs from the one setup.sh recorded) and
-   warns when a newer kit release is out and names the update command; § 6 lists the units changed since the
+   warns when a newer kit release is out and names the update command; § 5 says whether `.context/` is an
+   adopted ctx store (not adopted: `ctx_adapter.py adopt`, once); § 6 lists the units changed since the
    last stamp. A stale row in § 3: `/env-init --refresh`, never a hand-dated row.
 2. **Judgement pass** — only when § 6 lists changed units or a unit is flagged: fork `triage` with
    *"For each of these SKILL.md/agent files answer in one line, `<unit> · OK | <finding>`: is the
@@ -34,10 +35,11 @@ A run proves the kit is sound (frontmatter, no environment value in a kit file, 
    on a plugin install: that is Claude Code's plugin cache, and `claude plugin update` overwrites it (§ 1 warns
    about a file changed there). No checkout yet: `gh repo clone <kit repo>` (§ 1 names it) into the workspace.
 5. **Report.** One log per day and environment: `make -C $BATON/context-db new TYPE=log DOMAIN=kit-health
-   SLUG=<YYYY-MM-DD>-<env> TITLE="kit-health <date> · <env>"` (the date of the report header), paste the report
-   and each finding's outcome, `make … index`. When that log already exists (an earlier run today, or the re-run
-   after a Fix), `new` refuses to clobber it: add a `## Run <HH:MM>` section with the same content at the top of
-   its body instead (newest first, as in every log).
+   SLUG=<YYYY-MM-DD>-<env> TITLE="kit-health <date> · <env>"` (the date of the report header), then add the report
+   and each finding's outcome with `ctx_insert` (doc key `kit-health/<YYYY-MM-DD>-<env>`, after the title line) —
+   a direct `Write`/`Edit` of a `.context/` doc is denied. When that log already exists (an earlier run today, or
+   the re-run after a Fix), `new` refuses to clobber it: `ctx_insert` a `## Run <HH:MM>` section with the same
+   content at the top of its body instead (newest first, as in every log).
 6. **Stamp.** Re-run step 1 with `--stamp`: it refuses on any error **or un-accepted leak hit**, else
    writes the HEALTH doc (`last_green`, `kit_commit`, `kit_version`, `install_mode`, `warnings`) and re-indexes.
 7. **PR.** Kit files the walk touched go out as one PR from that worktree (`pr-open`); after the merge (and
