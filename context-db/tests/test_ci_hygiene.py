@@ -310,6 +310,52 @@ class MermaidDepsPinned(unittest.TestCase):
         self.assertIn("package-ecosystem: npm", cfg)
         self.assertIn("directory: /skills/pr-open", cfg)
 
+    def test_dependabot_ignores_semver_major_for_mermaid_and_jsdom(self):
+        # the validator stays on the mermaid major GitHub renders diagrams with; jsdom only hosts mermaid so it
+        # follows the same rule. dompurify is not pinned to a major, so it is not expected in the ignore list.
+        cfg = (KIT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+        npm_block = cfg[cfg.index("package-ecosystem: npm"):]
+        for name in ("mermaid", "jsdom"):
+            m = re.search(r'dependency-name:\s*"?' + name + r'"?\s*\n\s*update-types:\s*\[[^\]]*"version-update:semver-major"[^\]]*\]', npm_block)
+            self.assertIsNotNone(m, f"no semver-major ignore rule for {name} in the pr-open npm entry")
+
+
+class DependabotManifestSkipBump(unittest.TestCase):
+    """A Dependabot npm PR only ever touches a unit's package.json/package-lock.json — it cannot also bump
+    SKILL.md's metadata.version, so ci.yml's kit-verify job grants it the same --skip-bump treatment as a
+    wording-only PR, computed from the actor and the changed paths (never a silent exemption inside
+    review_gate.py itself, which has no manifest-only carve-out — see test_review_gate.py's Bumps tests)."""
+
+    TEXT = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+
+    def job_text(self) -> str:
+        return self.TEXT.split("\n  kit-verify:\n", 1)[1].split("\n  changed-paths:\n", 1)[0]
+
+    def test_the_step_names_both_the_actor_and_the_path_check(self):
+        job = self.job_text()
+        step = job.split("Dependabot manifest-only diff", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("dependabot[bot]", step)  # the author condition
+        # the PR's author, never github.actor: a re-run by a person would otherwise flip the decision
+        self.assertIn("github.event.pull_request.user.login", step)
+        self.assertNotIn("github.actor", step)
+        self.assertIn("skills/[^/]+/package(-lock)?", step)  # the path check: only skills/*/package(-lock).json
+        self.assertIn("git diff --name-only", step)  # computed from the diff, not claimed
+        self.assertIn("bump check skipped: Dependabot manifest-only change", step)  # visible, not silent
+
+    def test_review_gate_step_still_honours_the_wording_only_path(self):
+        job = self.job_text()
+        step = job.split("Review gate (tier 0", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("dependabot-manifest.outputs.skip", step)
+        self.assertIn("contains(github.event.pull_request.labels.*.name, 'wording')", step)
+        self.assertIn("[skip-bump]", step)
+
+    def test_review_gate_py_has_no_silent_manifest_exemption(self):
+        # the exemption lives in ci.yml (computed, visible in the run's log), not as an unlabeled shape
+        # review_gate.py matches on its own — grep the module, not just this workflow.
+        text = (BIN / "review_gate.py").read_text(encoding="utf-8")
+        self.assertNotIn("lockfile_only", text)
+        self.assertNotIn("NPM_MANIFESTS", text)
+
 
 class Hosting(unittest.TestCase):
     """A public repository runs every job on GitHub-hosted runners — no workflow names a self-hosted runner, so

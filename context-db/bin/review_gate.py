@@ -14,7 +14,10 @@ locally):
          `metadata.version` (a higher integer than base) and sets `metadata.updated` to a later date; a new unit needs an
          integer version. What changed is the PR's squash commit, which the generated release log lists. Wording-only
          edits are exempt with `--skip-bump` (ci.yml passes it for the `wording` label or `[skip-bump]` in the PR
-         title/body — the exemption is the author's explicit claim, visible on the PR).
+         title/body — the exemption is the author's explicit claim, visible on the PR). A Dependabot npm PR that only
+         touches a unit's `package.json` / `package-lock.json` gets the same `--skip-bump` treatment from ci.yml
+         itself (by actor and changed paths) rather than a silent exemption here — every exemption from this check
+         stays a visible, ci.yml-level claim, never an unlabeled shape a diff happens to match.
 
 Every finding is one line in the review's fixed shape: `[STOP] path:line — claim (rule)` (docs/REVIEW.md § Findings).
 Exit 1 on any finding, 0 with a one-line summary otherwise; `--json` prints the findings as a list for
