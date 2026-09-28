@@ -93,6 +93,34 @@ def today() -> str:
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
+# The naming convention for a NEW registration (owner decision 2026-09-27): `<lane>-<topic>[-n]` — lower-case
+# kebab-case, at least two parts, at most 32 characters; the lane is the repo or area, the topic what the session
+# owns, `-2`/`-3` a successor on the same lane. Names registered before the convention keep working.
+CONVENTION_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)+$")
+CONVENTION_MAX = 32
+
+
+def check_convention(name: str) -> None:
+    if not CONVENTION_RE.match(name) or len(name) > CONVENTION_MAX:
+        sys.exit(f"session.py: {name!r} does not follow the session naming convention `<lane>-<topic>[-n]` — lower-case "
+                 f"kebab-case, at least two parts, at most {CONVENTION_MAX} characters (e.g. `kit-hardening`, "
+                 f"`kit-216-changelog`, `kit-weekly-2`); a successor on the same lane adds -2, -3")
+
+
+def record_name(name: str) -> None:
+    """Remember this session's registry name in its own scratch dir, so `kit_profile.py session-name` / `footer`
+    can say which session wrote a PR or a comment. Per session (`CLAUDE_CODE_SESSION_ID` keys the scratch dir);
+    a failure only costs the footer its session part, so it is reported, never fatal. Only a name that follows the
+    convention is recorded: the footer is public, and a grandfathered name was never chosen to be (it gets the bare
+    footer until the lane re-registers under a conforming name)."""
+    if not CONVENTION_RE.match(name) or len(name) > CONVENTION_MAX:
+        return
+    try:
+        (profile.scratch() / "session-name").write_text(name + "\n", encoding="utf-8")
+    except (OSError, profile.ScratchError) as e:
+        print(f"session.py: could not record the session name for the PR footer ({e})", file=sys.stderr)
+
+
 def check_name(name: str) -> str:
     if not NAME_RE.match(name or "") or ".." in name:
         sys.exit(f"session.py: invalid session name {name!r} — letters, digits, '.', '_', '-'; "
@@ -241,7 +269,8 @@ def _ledger_append(meta: dict, st) -> None:
 def cmd_register(a) -> None:
     path = restore_from_archive(a.name)  # a successor re-registering a swept name continues that doc, not a new one
     meta, body = read_doc(path)
-    if meta is None:
+    if meta is None:  # a new registration: the name must follow the convention (existing ones are grandfathered)
+        check_convention(a.name)
         meta, body = {}, DEFAULT_BODY.format(name=a.name)
     meta["session"] = a.name
     if a.ref:    meta["ref"] = a.ref
@@ -257,6 +286,7 @@ def cmd_register(a) -> None:
     meta["heartbeat"] = now_iso()
     meta["updated"] = today()
     write_doc(path, meta, body)
+    record_name(a.name)
     print(f"registered {os.path.relpath(path, CTX)}")
 
 
@@ -276,6 +306,7 @@ def cmd_touch(a) -> None:
     meta["heartbeat"] = now_iso()
     meta["updated"] = today()
     write_doc(path, meta, body)
+    record_name(meta["session"])
     print(f"touched {os.path.relpath(path, CTX)} @ {local_str(meta['heartbeat'])}")
 
 
