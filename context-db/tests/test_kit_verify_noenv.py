@@ -196,7 +196,10 @@ class PluginManifest(unittest.TestCase):
         finally:
             kit_verify.KIT = saved
 
-    def write(self, kit: Path, version="1.2.3", name="my-kit", market_name=None, market_source="./", kit_version="1.2.3"):
+    def write(self, kit: Path, version="1.2.3", name="my-kit", market_name=None,
+              market_source=None, kit_version="1.2.3"):
+        if market_source is None:
+            market_source = {"source": "github", "repo": "o/my-kit", "ref": f"v{kit_version}"}
         (kit / ".claude-plugin").mkdir(parents=True, exist_ok=True)
         # the identity options and the hook are what the real kit ships; check_identity_options has its own tests
         (kit / ".claude-plugin" / "plugin.json").write_text(json.dumps({"name": name, "version": version, "userConfig": {
@@ -206,6 +209,7 @@ class PluginManifest(unittest.TestCase):
         (kit / ".claude-plugin" / "marketplace.json").write_text(json.dumps(
             {"name": "m", "owner": {"name": "o"}, "plugins": [{"name": market_name or name, "source": market_source}]}), encoding="utf-8")
         (kit / "VERSION").write_text(kit_version + "\n", encoding="utf-8")
+        (kit / ".git").mkdir(exist_ok=True)  # the kit's own checkout: the marketplace pin is enforced there
 
     def test_the_kit_agrees(self):
         self.assertEqual(self.check(KIT), [])
@@ -222,7 +226,12 @@ class PluginManifest(unittest.TestCase):
             self.write(kit, market_name="other")
             self.assertTrue(any("no plugins[] entry" in e for e in self.check(kit)))
             self.write(kit, market_source="./plugins/x")
-            self.assertTrue(any("no plugins[] entry" in e for e in self.check(kit)))
+            self.assertTrue(any("is not a github source" in e for e in self.check(kit)))
+            self.write(kit, market_source={"source": "github", "repo": "o/my-kit", "ref": "v9.9.9"})
+            self.assertTrue(any("source.ref 'v9.9.9' != 'v1.2.3'" in e for e in self.check(kit)))
+            self.write(kit, market_source="./")
+            (kit / ".git").rmdir()  # an installed copy (the plugin cache, the install smoke's `./` swap): not a checkout
+            self.assertEqual(self.check(kit), [])
             (kit / ".claude-plugin" / "plugin.json").write_text("{nope", encoding="utf-8")
             self.assertTrue(any("invalid JSON" in e for e in self.check(kit)))
             (kit / ".claude-plugin" / "plugin.json").unlink()
