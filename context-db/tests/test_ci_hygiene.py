@@ -18,6 +18,27 @@ USES = re.compile(r"^\s*-?\s*uses:\s*([^\s#]+)", re.M)
 PINNED = re.compile(r"^[\w.-]+/[\w.-]+(?:/[\w./-]+)?@[0-9a-f]{40}$")
 
 
+def run_block(workflow_text: str, step_name: str) -> str:
+    """The dedented body of one `- name: <step_name>` step's `run: |` block — no YAML parser, just the same
+    marker-splitting the rest of this file already uses, so this test file stays dependency-free."""
+    marker = f"- name: {step_name}\n"
+    after = workflow_text[workflow_text.index(marker) + len(marker):]
+    body = after[after.index("run: |\n") + len("run: |\n"):]
+    indent = None
+    out = []
+    for line in body.splitlines():
+        if not line.strip():
+            out.append("")
+            continue
+        cur = len(line) - len(line.lstrip(" "))
+        if indent is None:
+            indent = cur
+        if cur < indent:
+            break
+        out.append(line[indent:])
+    return "\n".join(out)
+
+
 def workflows() -> list[Path]:
     return sorted(WORKFLOWS.glob("*.yml"))
 
@@ -149,6 +170,139 @@ class PythonFloorLeg(unittest.TestCase):
         text = (WORKFLOWS / "auto-merge.yml").read_text(encoding="utf-8")
         required = next(line for line in text.splitlines() if line.strip().startswith("REQUIRED:"))
         self.assertIn("python-floor (3.9)", required)
+
+
+class MacosLeg(unittest.TestCase):
+    """The BSD/macOS fallbacks in skills/_lib/portable.sh (no flock, no setsid, BSD date) were exercised by
+    PATH-manipulation tests on a Linux runner only, never on a real macOS interpreter — a real macos-latest job
+    proves the fallbacks, not just the tests that stand in for them, and must be gated so it doesn't run (and
+    cost) on every unrelated PR."""
+
+    TEXT = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+
+    def test_declares_a_macos_job(self):
+        self.assertIn("runs-on: macos-latest", self.TEXT)
+
+    def test_macos_job_runs_the_engine_suite(self):
+        job = self.TEXT.split("\n  macos:\n", 1)[1].split("\n  forced-signing:\n", 1)[0]
+        self.assertIn("make -C context-db test", job)
+
+    def test_macos_job_is_gated_by_changed_paths(self):
+        job = self.TEXT.split("\n  macos:\n", 1)[1].split("\n  forced-signing:\n", 1)[0]
+        self.assertIn("needs: changed-paths", job)
+        self.assertIn("needs.changed-paths.outputs.portability", job)
+
+    def test_changed_paths_job_covers_the_scoped_globs(self):
+        # docs claim: sh scripts, their tests, skills/_lib, hooks/, and ci.yml itself — every place a shell
+        # portability bug (or the legs' own routing logic) can hide
+        job = self.TEXT.split("\n  changed-paths:\n", 1)[1].split("\n  macos:\n", 1)[0]
+        self.assertIn(r"\.sh$", job)
+        self.assertIn("context-db/tests/", job)
+        self.assertIn("skills/_lib/", job)
+        self.assertIn(r"^hooks/", job)
+        self.assertIn(r"^\.github/workflows/ci\.yml$", job)
+
+    def test_a_push_to_main_is_never_silently_skipped(self):
+        # the path filter only bounds a PR's own iterating pushes; a merge to main always gets the full matrix
+        job = self.TEXT.split("\n  changed-paths:\n", 1)[1].split("\n  macos:\n", 1)[0]
+        self.assertIn('"$EVENT_NAME" != "pull_request"', job)
+
+    def test_shell_parse_steps_pick_the_interpreter_by_shebang(self):
+        # sh -n/dash -n reject bash syntax (`< <(...)`, arrays) outright — a bash-shebang script must be
+        # routed to `bash -n` (the macOS SYSTEM bash, 3.2) instead, never lumped in with the sh/dash scripts
+        job = self.TEXT.split("\n  macos:\n", 1)[1].split("\n  forced-signing:\n", 1)[0]
+        self.assertIn("head -1", job, "no shebang inspection in the macos job's shell-parse steps")
+        self.assertIn("*bash*", job, "no bash-shebang match in the macos job's shell-parse steps")
+        self.assertIn("bash -n", job)
+        self.assertIn("sh -n", job)
+
+    def test_shell_parse_steps_pass_against_the_real_repo_today(self):
+        # runs the two step scripts verbatim (extracted from ci.yml, not re-typed) against THIS checkout —
+        # proves the shebang routing actually clears every tracked .sh/hook today, not just in theory
+        for step_name in (
+            "Bash-shebang scripts parse under the macOS system bash (3.2)",
+            "sh/no-shebang scripts parse under sh (and dash, where installed)",
+        ):
+            script = run_block(self.TEXT, step_name)
+            self.assertTrue(script.strip(), f"could not extract the '{step_name}' step's script")
+            # a CI runner may install dash; a developer's `make test` must never install anything, so the
+            # package-manager line is dropped before the step runs locally
+            script = "\n".join(l for l in script.splitlines() if "brew install" not in l and "apt-get install" not in l)
+            self.assertNotRegex(script, r"\b(brew|apt-get|pip3?) install\b", "a local test run must never install a package")
+            r = subprocess.run(["bash", "-c", script], cwd=KIT, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, f"{step_name}:\n{r.stdout}{r.stderr}")
+
+
+class ForcedSigningLeg(unittest.TestCase):
+    """test_hermetic_fixtures.py checks the tests against a hostile ~/.gitconfig built inside one test, never
+    across a whole suite run whose runner itself has commit.gpgsign=true (what a contributor with SSH-signed
+    commits on by default actually has) — a CI leg that forces it ambiently, with a signing key that cannot
+    exist, and requires the suite to stay green anyway."""
+
+    TEXT = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+
+    def test_declares_the_job(self):
+        self.assertIn("forced-signing:", self.TEXT)
+
+    def job_text(self) -> str:
+        return self.TEXT.split("\n  forced-signing:\n", 1)[1].split("\n  python-floor:\n", 1)[0]
+
+    def test_forces_commit_signing_through_a_missing_key(self):
+        job = self.job_text()
+        self.assertIn("git config --global commit.gpgsign true", job)
+        self.assertIn("git config --global gpg.format ssh", job)
+        self.assertIn("git config --global user.signingkey", job)
+
+    def test_the_engine_suite_runs_after_the_hostile_config_and_is_not_allowed_to_fail(self):
+        job = self.job_text()
+        self.assertNotIn("continue-on-error", job)
+        signing_at = job.index("git config --global commit.gpgsign true")
+        test_at = job.index("make -C context-db test")
+        self.assertLess(signing_at, test_at, "the suite must run AFTER signing is forced, not before")
+
+    def test_is_gated_by_changed_paths_like_macos(self):
+        job = self.job_text()
+        self.assertIn("needs: changed-paths", job)
+        self.assertIn("needs.changed-paths.outputs.portability", job)
+
+
+class MermaidDepsPinned(unittest.TestCase):
+    """pr-open's mermaid-check.mjs used to be run after `npm i --no-audit --no-fund mermaid@11 jsdom dompurify` —
+    two of the three packages unpinned, no lockfile, so the Mermaid validation result depended on whatever npm
+    resolved that day. skills/pr-open now carries its own package.json + package-lock.json (installed with
+    `npm ci`, so the exact versions in the lockfile are what runs), and Dependabot tracks that directory."""
+
+    PR_OPEN = KIT / "skills" / "pr-open"
+
+    def test_package_json_and_lockfile_exist(self):
+        self.assertTrue((self.PR_OPEN / "package.json").is_file(), "no skills/pr-open/package.json")
+        self.assertTrue((self.PR_OPEN / "package-lock.json").is_file(), "no skills/pr-open/package-lock.json")
+
+    def test_package_json_pins_all_three_deps_to_exact_versions(self):
+        import json
+        deps = json.loads((self.PR_OPEN / "package.json").read_text(encoding="utf-8"))["dependencies"]
+        for name in ("mermaid", "jsdom", "dompurify"):
+            self.assertIn(name, deps, f"package.json is missing {name}")
+            self.assertRegex(deps[name], r"^\d+\.\d+\.\d+$", f"{name}: {deps[name]!r} is not an exact version")
+
+    def test_lockfile_versions_match_package_json(self):
+        import json
+        pkg = json.loads((self.PR_OPEN / "package.json").read_text(encoding="utf-8"))
+        lock = json.loads((self.PR_OPEN / "package-lock.json").read_text(encoding="utf-8"))
+        root_deps = lock["packages"][""]["dependencies"]
+        self.assertEqual(pkg["dependencies"], root_deps)
+
+    def test_skill_md_no_longer_tells_readers_to_npm_i_unpinned(self):
+        # the body and its reference files together — the validate-before-publishing step lives in reference/
+        files = [self.PR_OPEN / "SKILL.md", *sorted((self.PR_OPEN / "reference").glob("*.md"))]
+        text = "\n".join(f.read_text(encoding="utf-8") for f in files)
+        self.assertNotIn("npm i --no-audit --no-fund mermaid@11 jsdom dompurify", text)
+        self.assertIn("npm ci", text)
+
+    def test_dependabot_tracks_the_pr_open_npm_manifest(self):
+        cfg = (KIT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+        self.assertIn("package-ecosystem: npm", cfg)
+        self.assertIn("directory: /skills/pr-open", cfg)
 
 
 class Hosting(unittest.TestCase):
