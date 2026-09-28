@@ -12,6 +12,8 @@
 # that recovered. Concurrency: one scan at a time (.scan.lock); every ledger append takes .ledger.lock.
 set -uo pipefail
 KIT=$(cd "$(dirname "$0")/../.." && pwd)
+# shellcheck source=../_lib/portable.sh
+. "$KIT/skills/_lib/portable.sh"  # epoch_to_iso, with_lock — GNU/Linux and macOS/BSD alike
 # the workspace's .context/ (#74) the way every kit script finds it (kit_profile.py context), never from this
 # script's location: on a plugin install that is Claude Code's plugin cache, wiped on update. PR_REVIEW_HOME overrides.
 CTX=$(python3 "$KIT/context-db/bin/kit_profile.py" context)
@@ -31,18 +33,21 @@ AUTO_MODE=$(jq -r '.auto_approve.mode // "off"' "$CFG"); AUTO_BOTS=$(jq -c '.aut
 AUTO_MAXF=$(jq -r '.auto_approve.max_files // 10' "$CFG"); AUTO_MAXL=$(jq -r '.auto_approve.max_lines // 200' "$CFG")
 TRIVIAL=$(dirname "$0")/../pr-review/scripts/trivial-check.py
 eval "$(python3 "$KIT/context-db/bin/kit_profile.py" gh-env)"  # github.sandbox_token_prefix, if any
-mapfile -t REPOS < <(jq -r '.sweep_repos[]' "$CFG"); MARK=0; QUIET=0; REPO_OVERRIDE=()
+REPOS=()
+while IFS= read -r _repo; do REPOS+=("$_repo"); done < <(jq -r '.sweep_repos[]' "$CFG")  # a loop, not a bash-4-only array builtin — macOS ships bash 3.2
+MARK=0; QUIET=0; REPO_OVERRIDE=()
 while [ $# -gt 0 ]; do case $1 in
   --days) DAYS=$2; shift 2;; --limit) CAP=$2; shift 2;; --repo) REPO_OVERRIDE+=("$2"); shift 2;;
   --mark) MARK=1; shift;; --quiet) QUIET=1; shift;;
   *) echo "usage: pr-scan.sh [--days N] [--limit N] [--repo o/r]... [--mark] [--quiet]" >&2; exit 2;; esac; done
 [ ${#REPO_OVERRIDE[@]} -gt 0 ] && REPOS=("${REPO_OVERRIDE[@]}")
 ERR=$OUT/errors.txt; : > "$ERR"; : > "$ERR.raw"
-since=$(date -u -d "-${DAYS} days" +%Y-%m-%dT%H:%M:%SZ)
+# epoch arithmetic + epoch_to_iso, not `date -d "-N days"` (GNU-only — BSD `date` has no `-d`)
+since=$(epoch_to_iso "$(( $(date -u +%s) - DAYS * 86400 ))")
 
-# one scan at a time — a second sweep would double-mark the ledger
-exec 8>"$ROOT/.scan.lock"
-flock -n 8 || { echo "error: another pr-scan holds $ROOT/.scan.lock — not starting a second sweep" >&2; exit 3; }
+# one scan at a time — a second sweep would double-mark the ledger; with_lock falls back to an
+# atomic mkdir where this host has no flock (macOS without coreutils)
+with_lock "$ROOT/.scan.lock" || { echo "error: another pr-scan holds $ROOT/.scan.lock — not starting a second sweep" >&2; exit 3; }
 
 # gh_json <label> <gh args…> — 2 attempts with backoff; result (valid JSON, non-empty) lands in $RESP.
 # Runs in the current shell so the failure counters survive (never call it inside $(…)).
@@ -188,6 +193,16 @@ fi
 echo "summary: union=$total candidates=$cand shown=$shown new=$newc auto=$autoc auto_mode=$AUTO_MODE dropped(bots=$dropped_bot draft=$dropped_draft stale>${DAYS}d=$dropped_stale done=$dropped_done skipped=$dropped_skip approved=$dropped_approved cap=$dropped_cap failed=$dropped_fail) degraded=$degraded errors=$FAILS retries=$RETRIES out=$OUT"
 if [ "$MARK" = 1 ] && [ "$newc" -gt 0 ]; then
   ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  ( flock 9; jq -c --arg ts "$ts" --argjson m "$MAXROWS" '.[:$m][] | select(.surfaced|not) | {repo, pr, head, status:"surfaced", ts:$ts, src, kind, auto:(.auto.eligible // false)}' "$OUT/queue.json" >> "$LEDGER" ) 9>"$ROOT/.ledger.lock"
+  # the ledger is shared with pr-review's writers: flock where the host has it; without it (macOS/BSD) the
+  # rows are rendered first and land in ONE append, which a concurrent appender cannot interleave into
+  rows=$(jq -c --arg ts "$ts" --argjson m "$MAXROWS" '.[:$m][] | select(.surfaced|not) | {repo, pr, head, status:"surfaced", ts:$ts, src, kind, auto:(.auto.eligible // false)}' "$OUT/queue.json") \
+    || { echo "error: could not render the surfaced rows for $LEDGER" >&2; FAILS=$((FAILS+1)); rows=""; }
+  if [ -n "$rows" ]; then
+    if command -v flock >/dev/null 2>&1; then
+      ( flock 9; printf '%s\n' "$rows" >> "$LEDGER" ) 9>"$ROOT/.ledger.lock"
+    else
+      printf '%s\n' "$rows" >> "$LEDGER"
+    fi
+  fi
 fi
 [ "$FAILS" -eq 0 ]

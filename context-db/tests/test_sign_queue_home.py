@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -319,3 +320,103 @@ class StagingRuleIsExplicit(unittest.TestCase):
             jobs = list((ctx / "state" / "sign-queue").glob("*-topic-c.sh"))
             self.assertEqual(len(jobs), 1, r.stdout + r.stderr)
             self.assertIn("add -A", jobs[0].read_text())
+
+
+class RunJobTimeout(unittest.TestCase):
+    """A job script that hangs (a stuck `git push`/network call inside "sh <job>") used to block
+    `run_job` forever; it must now be killed after SIGN_QUEUE_JOB_TIMEOUT and reported as a timeout
+    instead of holding the drain open indefinitely — including when the hang is a GRANDCHILD (a job
+    that shells out, and that in turn hangs), not just the job's own top-level "sh <job>" process."""
+
+    def test_a_hung_grandchild_is_killed_and_the_reader_returns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            ctx = tmp / "ws" / ".context"
+            ctx.mkdir(parents=True)
+            env = {k: v for k, v in os.environ.items() if not k.startswith("SIGN_QUEUE_")}
+            with mock.patch.dict(os.environ, {**env, "CONTEXT_ROOT": str(ctx)}, clear=True):
+                sq = load_signq()
+            job_path = tmp / "20260101T000000Z-topic-t.sh"
+            # `sh -c "sleep 999; :" &` forks a real grandchild (the trailing `:` stops the nested
+            # shell from exec-replacing itself with `sleep`, the usual tail-call optimisation) —
+            # `sleep 999` sits two process levels below the job's own "sh <job>", the shape a job
+            # that shells out to git/gh and THAT hangs would actually have.
+            job_path.write_text(
+                '# META {"topic": "t"}\n'
+                'sh -c "sleep 999; :" &\n'
+                'wait\n'
+                'echo "pushed deadbeefdeadbeef G subject"\n')
+            j = sq.Job(job_path)
+            os.environ["SIGN_QUEUE_JOB_TIMEOUT"] = "1"
+            try:
+                start = time.monotonic()
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    result = sq.run_job(j, verbose=False, dry=False)
+                elapsed = time.monotonic() - start
+            finally:
+                os.environ.pop("SIGN_QUEUE_JOB_TIMEOUT", None)
+            self.assertLess(elapsed, 6, "run_job did not return until the grandchild's own 999s sleep "
+                                        "finished — the timeout did not reach the whole process tree")
+            self.assertNotEqual(result["status"], "pushed")
+            self.assertIn("timed out after 1s", buf.getvalue())
+
+    def _load(self, tmp):
+        ctx = Path(tmp) / "ws" / ".context"
+        ctx.mkdir(parents=True)
+        env = {k: v for k, v in os.environ.items() if not k.startswith("SIGN_QUEUE_")}
+        with mock.patch.dict(os.environ, {**env, "CONTEXT_ROOT": str(ctx)}, clear=True):
+            return load_signq()
+
+    def test_no_pgrep_still_finds_children_or_at_least_the_root(self):
+        # a minimal image without procps: `pgrep` raises FileNotFoundError; the walk must fall back to
+        # /proc (or return nothing) instead of raising out of the Timer thread before any kill runs
+        with tempfile.TemporaryDirectory() as tmp:
+            sq = self._load(tmp)
+        child = subprocess.Popen(["sh", "-c", "sleep 30; :"])
+        try:
+            real_run = subprocess.run
+            def no_pgrep(argv, *a, **k):
+                if argv and argv[0] == "pgrep":
+                    raise FileNotFoundError("pgrep")
+                return real_run(argv, *a, **k)
+            with mock.patch.object(sq.subprocess, "run", side_effect=no_pgrep):
+                kids = sq._descendants(os.getpid())
+            if Path("/proc").is_dir():
+                self.assertIn(child.pid, kids)
+            else:
+                self.assertIsInstance(kids, list)
+        finally:
+            child.kill(); child.wait()
+
+    def test_kill_order_is_children_before_the_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sq = self._load(tmp)
+        sent = []
+        with mock.patch.object(sq, "_descendants", return_value=[11, 12, 21]), \
+             mock.patch.object(sq, "_alive", return_value=False), \
+             mock.patch.object(sq.os, "kill", side_effect=lambda pid, sig: sent.append(pid)):
+            sq._kill_tree(10, grace=0)
+        self.assertEqual(sent[:4], [21, 12, 11, 10])
+
+    def test_run_job_never_starts_a_new_session_or_process_group(self):
+        # a job may need the controlling terminal for ssh-keygen -Y sign / ssh to prompt for a
+        # passphrase; start_new_session (or any setpgrp/preexec_fn=os.setsid) would take that tty
+        # away and turn a passphrase prompt into a silent SIGTTIN hang instead — worse than the bug
+        # this file fixes. This greps the actual Popen call, not just behaviour, so a future edit
+        # that re-adds either one fails here even before it can change run_job's observable timing.
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = Path(tmp) / "ws" / ".context"
+            ctx.mkdir(parents=True)
+            env = {k: v for k, v in os.environ.items() if not k.startswith("SIGN_QUEUE_")}
+            with mock.patch.dict(os.environ, {**env, "CONTEXT_ROOT": str(ctx)}, clear=True):
+                sq = load_signq()
+        import inspect
+        src = inspect.getsource(sq.run_job)
+        self.assertNotIn("start_new_session", src)
+        self.assertNotIn("process_group", src)
+        self.assertNotIn("preexec_fn", src)
+
+
+if __name__ == "__main__":
+    unittest.main()

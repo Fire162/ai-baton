@@ -31,8 +31,11 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -420,6 +423,85 @@ SIG = {"G": "signed ✓", "U": "signed, untrusted key", "B": "BAD signature", "N
        "X": "expired sig", "Y": "expired key", "R": "revoked key"}
 
 
+def _descendants(pid: int) -> List[int]:
+    """Every process descended from pid, BFS one generation at a time — `pgrep -P <ppid>` is the
+    portable way to ask (POSIX-ish; ships with Linux's procps and with macOS out of the box), unlike
+    walking /proc (Linux-only, absent on macOS/BSD). A `pgrep` that finds nothing exits non-zero with
+    empty stdout, same as "no children" — never treated as an error here."""
+    out: List[int] = []
+    frontier = [pid]
+    while frontier:
+        nxt: List[int] = []
+        for p in frontier:
+            nxt.extend(_children(p))
+        out.extend(nxt)
+        frontier = nxt
+    return out
+
+
+def _children(ppid: int) -> List[int]:
+    """Direct children of ppid: `pgrep -P` where it exists, else /proc's stat files (a minimal image
+    with no procps), else none — the caller still kills the root, so a missing tool never leaves the
+    job itself running."""
+    try:
+        r = subprocess.run(["pgrep", "-P", str(ppid)], capture_output=True, text=True, timeout=10)
+        return [int(x) for x in r.stdout.split()]
+    except (OSError, subprocess.SubprocessError):
+        pass
+    kids: List[int] = []
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return kids
+    for d in proc.iterdir():
+        if not d.name.isdigit():
+            continue
+        try:
+            stat = (d / "stat").read_text()
+            # field 4 is the ppid; the command name (field 2) may hold spaces, so split after its ')'
+            if int(stat.rsplit(")", 1)[1].split()[1]) == ppid:
+                kids.append(int(d.name))
+        except (OSError, ValueError, IndexError):
+            continue
+    return kids
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _kill_tree(root: int, grace: float = 2.0) -> None:
+    """SIGTERM, then (after `grace` seconds) SIGKILL, every process descended from `root` — a job's
+    `sh <job>` and everything it forked (git, gh, a hung `sleep` two levels down) — children before
+    the parent each pass, so a parent never disappears out from under a child pgrep might otherwise
+    still need to place in the tree. Runs in the caller's own session and process group throughout
+    (never `start_new_session` / `setpgrp` on the job's Popen): a job may need the controlling
+    terminal for `ssh-keygen -Y sign` / `ssh` to prompt for a passphrase on /dev/tty, and a background
+    process GROUP that tries to read the tty gets SIGTTIN, not a prompt — a hang worse than the one
+    this is guarding against. `root` itself may already be gone by the time this runs; killing a pid
+    that no longer exists is not an error."""
+    # deepest descendants first, the root last — children before the parent, as described above
+    tree = list(reversed(_descendants(root))) + [root]
+    for pid in tree:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    deadline = time.monotonic() + grace
+    while time.monotonic() < deadline and any(_alive(pid) for pid in tree):
+        time.sleep(0.1)
+    for pid in tree:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
 def run_job(j: Job, verbose: bool, dry: bool) -> Dict[str, str]:
     LOGS.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
@@ -430,45 +512,69 @@ def run_job(j: Job, verbose: bool, dry: bool) -> Dict[str, str]:
         print(dim("      (dry run — not executed)"))
         return result
     start = _dt.datetime.now()
+    # A job script chains git fetch/rebase/push (and sometimes gh); none of that has its own
+    # timeout once it is inside "sh <job>". A hung remote or a credential prompt would otherwise
+    # block this read loop forever. JOB_TIMEOUT bounds the whole job; _kill_tree takes down the
+    # job's whole process tree (not just "sh <job>" itself — a grandchild left running would keep
+    # the stdout pipe's write end open and the read below would never see EOF).
+    JOB_TIMEOUT = int(os.environ.get("SIGN_QUEUE_JOB_TIMEOUT", "300"))
+    timed_out = threading.Event()
+
+    def _on_timeout(pid: int) -> None:
+        timed_out.set()
+        _kill_tree(pid)
+
     with j.log.open("a") as log:
         log.write(f"\n===== {now_z()} run {j.name}\n")
         p = subprocess.Popen(["sh", str(j.path)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                              text=True, env=env, bufsize=1, stdin=subprocess.DEVNULL)
+        timer = threading.Timer(JOB_TIMEOUT, _on_timeout, args=(p.pid,))
+        timer.start()
         tail: List[str] = []
-        assert p.stdout is not None
-        for raw in p.stdout:
-            line = raw.rstrip("\n")
-            log.write(line + "\n")
-            tail.append(line); tail = tail[-25:]
-            if verbose:
-                # tee the raw line to the console, but still parse it below — the milestones
-                # and the final "pushed <sha> <sig> <subject>" marker are the only evidence a
-                # push actually happened, verbose or not.
-                print("      " + dim("│ ") + line)
-            m = re.match(r"^pushed ([0-9a-f]+) (\S) (.*)", line)
-            if m:
-                result.update(sha=m.group(1), sig=m.group(2), subject=m.group(3))
-                continue
-            if not verbose:
-                for rx, fmt in MILESTONES:
-                    mm = rx.match(line)
-                    if mm and fmt:
-                        print("      " + dim("·") + " " + fmt(mm))
-                        break
-        rc = p.wait()
-        log.write(f"===== exit {rc}\n")
+        try:
+            assert p.stdout is not None
+            for raw in p.stdout:
+                line = raw.rstrip("\n")
+                log.write(line + "\n")
+                tail.append(line); tail = tail[-25:]
+                if verbose:
+                    # tee the raw line to the console, but still parse it below — the milestones
+                    # and the final "pushed <sha> <sig> <subject>" marker are the only evidence a
+                    # push actually happened, verbose or not.
+                    print("      " + dim("│ ") + line)
+                m = re.match(r"^pushed ([0-9a-f]+) (\S) (.*)", line)
+                if m:
+                    result.update(sha=m.group(1), sig=m.group(2), subject=m.group(3))
+                    continue
+                if not verbose:
+                    for rx, fmt in MILESTONES:
+                        mm = rx.match(line)
+                        if mm and fmt:
+                            print("      " + dim("·") + " " + fmt(mm))
+                            break
+            rc = p.wait()
+        finally:
+            timer.cancel()
+            if p.stdout is not None:
+                p.stdout.close()  # the tree is dead (or never existed): release the pipe, not just let it leak
+        if timed_out.is_set():
+            log.write(f"===== timed out after {JOB_TIMEOUT}s, killed\n")
+        else:
+            log.write(f"===== exit {rc}\n")
     secs = int((_dt.datetime.now() - start).total_seconds())
     # rc == 0 alone is not proof of a push: it only means the job script ran to its last line
     # without error. The job's own last command prints "pushed <sha> <sig> <subject>" (parsed
     # above); require that marker too, or a job that exits clean without ever reaching it (a
     # malformed or truncated script) would be recorded as pushed on rc alone.
-    if rc == 0 and result["sha"]:
+    if not timed_out.is_set() and rc == 0 and result["sha"]:
         result["status"] = "pushed"
         sig = SIG.get(result["sig"], result["sig"])
         sigtxt = green(sig) if result["sig"] == "G" else yellow(sig)
         print(f"      {green('✔')} {bold('pushed ' + result['sha'])}  {sigtxt}  {dim(f'{secs}s')}")
     else:
-        if rc == 0:
+        if timed_out.is_set():
+            hint = f"job timed out after {JOB_TIMEOUT}s (a hung git/gh call?) — killed"
+        elif rc == 0:
             hint = "job exited 0 but never printed its push confirmation — a truncated or edited job script?"
         else:
             hint = next((h for rx, h in FAIL_HINTS if any(rx.search(t) for t in tail)), "")
