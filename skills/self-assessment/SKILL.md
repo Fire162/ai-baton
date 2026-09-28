@@ -5,6 +5,7 @@ metadata:
   version: "11"
   updated: "2026-09-27"
   reviewed: "2026-09-24"
+  facts: "self_assessment.ledger,self_assessment.ledger_url"
 user-invocable: true
 ---
 

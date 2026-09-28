@@ -182,20 +182,28 @@ Stdlib only; never prints anything from settings.local.json (`identity-env` re-e
 ## `kit_verify.py`
 
 ```text
-usage: kit_verify.py [-h] [--stale N] [--no-env] [units ...]
+usage: kit_verify.py [-h] [--stale N] [--no-env] [--no-git] [--loading-table]
+                     [--write]
+                     [units ...]
 
 Verify the kit itself — every skill and agent carries the versioning
 frontmatter, this machine's env store is complete.
 
 positional arguments:
-  units       skill/agent files or dirs to verify (default: every unit; skips
-              the kit-wide totals)
+  units            skill/agent files or dirs to verify (default: every unit;
+                   skips the kit-wide totals)
 
 options:
-  -h, --help  show this help message and exit
-  --stale N   also list units whose reviewed is older than N days
-  --no-env    environment-free: skip the env-store checks (a bare clone, a
-              contributor's PR)
+  -h, --help       show this help message and exit
+  --stale N        also list units whose reviewed is older than N days
+  --no-env         environment-free: skip the env-store checks (a bare clone,
+                   a contributor's PR)
+  --no-git         skip the reviewed-vs-last-edit check (no git history to
+                   compare against)
+  --loading-table  print the numbers docs/loading.md quotes (units,
+                   description bytes, bodies, body bytes) and exit
+  --write          with --loading-table: rewrite the marked numbers in
+                   docs/loading.md
 ```
 
 ## `review_gate.py`
