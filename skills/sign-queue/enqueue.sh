@@ -101,6 +101,7 @@ case "$msg" in "$wt"/*)
   if [ -z "$files" ]; then echo "message file $msg is inside the worktree and no --files given: add -A would commit it. Put it under <workspace root>/.worktrees/ or pass --files" >&2; exit 2; fi;;
 esac
 case "$topic" in *[!A-Za-z0-9._-]*) echo "topic must be [A-Za-z0-9._-]" >&2; exit 2;; esac
+cand=""  # set only by --supersede below: an exported cand from the caller must never name a job to remove
 if [ $supersede = 1 ]; then
   # every job's line 2 is `# sign-queue job: <topic>  (enqueued <date> by session <by>)` (fixed shape,
   # written below) — the newest PENDING job (job names sort chronologically: a UTC timestamp prefix)
@@ -235,7 +236,7 @@ tmp="$job.tmp"
 # --supersede's actual deletion: every check above (--onto, --force-with-lease, --files, signq.py meta) has
 # now had its chance to `exit 2` — only past this point is the new job guaranteed to be installed, so only
 # past this point is dropping the old one safe.
-if [ -n "${cand:-}" ]; then
+if [ $supersede = 1 ] && [ -n "$cand" ]; then
   rm -f "$cand"
   echo "enqueue.sh: --supersede dropped $cbase" >&2
 fi

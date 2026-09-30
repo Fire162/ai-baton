@@ -39,7 +39,7 @@ def _seed_repo(root: Path) -> Path:
 
 
 def _enqueue(tmp: Path, ctx: Path, wt: Path, topic: str, fname: str, subject: str, by: str,
-            extra: list[str] | None = None) -> subprocess.CompletedProcess:
+            extra: list[str] | None = None, env_extra: dict | None = None) -> subprocess.CompletedProcess:
     (wt / fname).write_text(fname + "\n")
     msg = tmp / f"{fname}.msg.txt"
     msg.write_text(subject + "\n")
@@ -49,7 +49,7 @@ def _enqueue(tmp: Path, ctx: Path, wt: Path, topic: str, fname: str, subject: st
             "--ticket", "none", "--epic", "none", "--pr", "none", "--by", by]
     if extra:
         args += extra
-    return subprocess.run(args, env=_env(tmp, ctx), capture_output=True, text=True, timeout=60)
+    return subprocess.run(args, env={**_env(tmp, ctx), **(env_extra or {})}, capture_output=True, text=True, timeout=60)
 
 
 class SupersedeReplacesThePendingJob(unittest.TestCase):
@@ -95,6 +95,21 @@ class SupersedeReplacesThePendingJob(unittest.TestCase):
             q = ctx / "state" / "sign-queue"
             remaining = sorted(p.name for p in q.glob("*-fold-by.sh"))
             self.assertEqual(len(remaining), 2, "a different --by must never be folded away")
+
+
+class PlainEnqueueNeverRemoves(unittest.TestCase):
+    def test_an_exported_cand_is_ignored_without_supersede(self):
+        # `cand` is enqueue.sh's own variable: one leaking in from the caller's environment must not name a file to rm
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            ctx = tmp / "ws" / ".context"
+            ctx.mkdir(parents=True)
+            wt = _seed_repo(tmp / "ws")
+            victim = tmp / "victim.txt"
+            victim.write_text("keep\n")
+            r = _enqueue(tmp, ctx, wt, "plain", "a.txt", "fix: plain", "t", env_extra={"cand": str(victim)})
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertTrue(victim.exists(), "a plain enqueue removed a file named by an exported cand")
 
 
 class SupersedeRefusesAnAttemptedJob(unittest.TestCase):
