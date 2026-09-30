@@ -49,7 +49,8 @@ sh $BATON/skills/sign-queue/enqueue.sh <topic> <abs-worktree> <branch> <abs-msg-
     leaves every existing commit exactly as it is instead of replaying it, so that earlier unsigned commit stays
     unsigned even though the job reports a signed HEAD. The job always force-rebases (`-S -f`) so the range is
     replayed — and re-signed — every time, and it verifies every commit about to be pushed (not just HEAD) before
-    pushing at all, refusing (parked, `UNSIGNED <sha>`) rather than land one that slipped through.
+    pushing at all, refusing (parked, `UNSIGNED <sha>`) rather than land one with no signature or a bad one
+    (`%G?` N or B; U and E carry a signature this host cannot fully trust or check, and the drain reports them).
 - **One staging rule, same as `signed-git-commits`: stage explicit paths, never a silent `add -A`.**
   `--files "a b"` stages only those paths — the norm, especially in a worktree with unrelated noise. Each
   path is single-quoted in the job: route dirs of some web frameworks contain `$param`, and the unquoted
