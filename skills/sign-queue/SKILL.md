@@ -3,7 +3,7 @@ name: sign-queue
 description: "Shared queue for commits that must be GPG/SSH-signed and pushed by the user on the host: a session enqueues a job (worktree, branch, message file, flags), the user drains it with one command. Use for every commit or push in a signed-commits repo; never paste git one-liners. Inert where `systems.signed_commits` is false."
 compatibility: "Designed for Claude Code; needs signed_commits (systems.*)"
 metadata:
-  version: "18"
+  version: "19"
   updated: "2026-09-30"
   reviewed: "2026-09-27"
   requires: "signed_commits"
@@ -82,6 +82,17 @@ sh $BATON/skills/sign-queue/enqueue.sh <topic> <abs-worktree> <branch> <abs-msg-
 - `--files` and deletions: a `git rm`-staged deletion is in neither worktree nor index, so `git add -- <path>`
   fails on it; enqueue.sh drops such paths (they are already in the commit) and refuses paths that are
   neither present nor tracked. Check `git status --short` before enqueuing (first column = already staged).
+
+### Folding fixes into an unsigned job
+
+A review round (fix → enqueue → wait for `make sign` → reply) that gets another round of fixes before the
+owner drains would otherwise mean two jobs for one topic — or a hand check of the log/`.failed` state
+before deleting the old `.sh` yourself. `--supersede` does this in one step: it finds the newest PENDING
+job with the same `topic` (and, when you also pass `--by`, the same `--by`), deletes it, prints which job
+it dropped, then enqueues as usual. It refuses (exit 2, nothing touched) when that job already has a drain
+log or is parked as `<job>.failed` — it was attempted, not just sitting in the queue, and folding into it
+would lose that history; resolve it (`make sign_show` / `sign_log` / `sign_retry`) first instead. No match
+for the topic (and `--by`) is not an error: the job just enqueues normally, same as without the flag.
 
 ## User side — drain
 
