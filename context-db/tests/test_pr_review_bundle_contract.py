@@ -4,12 +4,16 @@ only" claim in one spot and a live `gh api` instruction a few lines later with n
 the two together. Text-shape checks only (no model judgement). Run: make -C .claude/context-db test."""
 from __future__ import annotations
 import re
+import sys
 import unittest
 from pathlib import Path
 
 KIT = Path(__file__).resolve().parents[2]
 SKILL = KIT / "skills" / "pr-review" / "SKILL.md"
 RUNNER = KIT / "agents" / "review-runner.md"
+RUNNER_REF = KIT / "skills" / "pr-review" / "reference" / "runner.md"
+AUTO_RUNNER = KIT / "agents" / "auto-runner.md"
+GH_ENV_LINE = 'eval "$(python3 $BATON/context-db/bin/kit_profile.py gh-env)"'
 
 
 def norm(text: str) -> str:
@@ -54,6 +58,49 @@ class BundleContract(unittest.TestCase):
         self.assertIn("pr-review/SKILL.md", flat)
         self.assertIn("§ Contract", flat,
                       "agents/review-runner.md does not point back at the skill's § Contract")
+
+
+class GhEnvBeforeLiveReads(unittest.TestCase):
+    """A sandbox that needs `github.sandbox_token_prefix` (kit_profile.py gh-env) must not have its live
+    `gh` reads fail silently: both the agent definition the runner actually follows and the prompt template
+    the main session spawns it with carry the same setup line `fetch-context.sh` already runs, and an auth
+    failure on one of those reads is a `NEEDS` hand-back — never folded into an `unverified` trap."""
+
+    def test_gh_env_is_prefixed_per_command_not_run_once(self):
+        # an export in one Bash call does not reach the next: "once, before the reads" leaves them unauthenticated
+        for rel in ("agents/review-runner.md", "agents/auto-runner.md", "skills/pr-review/reference/runner.md"):
+            text = (KIT / rel).read_text(encoding="utf-8")
+            self.assertIn("does not survive into the next Bash call", text, rel)
+            self.assertNotRegex(text, r"gh-env[^\n]*\n?[^\n]*\bonce, before", rel)
+
+    def test_the_auth_line_is_a_named_reason_not_a_fact_handback(self):
+        # a line matching kb.NEEDS_HANDBACK is routed to env-init as a missing fact; an auth failure is not one
+        sys.path.insert(0, str(KIT / "context-db" / "bin"))
+        import kb
+        self.assertIsNone(kb.NEEDS_HANDBACK.fullmatch("NEEDS gh reauth"))
+        self.assertIsNotNone(kb.NEEDS_HANDBACK.fullmatch("NEEDS github.person octo"))
+
+
+    def test_review_runner_agent_runs_gh_env_before_its_live_reads(self):
+        runner = RUNNER.read_text(encoding="utf-8")
+        self.assertIn(GH_ENV_LINE, runner,
+                      "agents/review-runner.md does not eval kit_profile.py gh-env before its live `gh` reads")
+        self.assertIn("NEEDS gh reauth", runner,
+                      "agents/review-runner.md does not turn a live-read auth failure into a NEEDS hand-back")
+
+    def test_prompt_template_carries_the_same_gh_env_line(self):
+        ref = RUNNER_REF.read_text(encoding="utf-8")
+        self.assertIn(GH_ENV_LINE, ref,
+                      "skills/pr-review/reference/runner.md § Prompt template does not carry the gh-env line")
+        self.assertIn("NEEDS gh reauth", ref,
+                      "skills/pr-review/reference/runner.md does not document the github.auth NEEDS hand-back")
+
+    def test_auto_runner_agent_runs_gh_env_before_its_live_reads(self):
+        auto = AUTO_RUNNER.read_text(encoding="utf-8")
+        self.assertIn(GH_ENV_LINE, auto,
+                      "agents/auto-runner.md does not eval kit_profile.py gh-env before its live `gh api` reads")
+        self.assertIn("NEEDS gh reauth", auto,
+                      "agents/auto-runner.md does not turn a live-read auth failure into a NEEDS hand-back")
 
 
 if __name__ == "__main__":
