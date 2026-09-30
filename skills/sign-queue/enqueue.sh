@@ -121,8 +121,8 @@ if [ $supersede = 1 ]; then
       echo "enqueue.sh: --supersede refuses $cbase — it already has a drain log or a parked failure; resolve it by hand (make sign_show / sign_log / sign_retry) first" >&2
       exit 2
     fi
-    rm -f "$cand"
-    echo "enqueue.sh: --supersede dropped $cbase" >&2
+    # deletion itself is deferred to just before the new job is installed (below the --onto/--force-with-lease/
+    # --files/signq.py meta checks): any of those can still `exit 2` and must leave the pending job untouched.
   fi
 fi
 if [ -n "$onto" ]; then
@@ -214,7 +214,11 @@ tmp="$job.tmp"
   fi
   if [ -n "$onto" ] || [ $rebase = 1 ] || [ -n "$lease" ]; then
     echo 'unsigned=""'
-    echo 'for sc in $(git -C "$WT" log --format="%H:%G?" "$OLDTIP..HEAD"); do'
+    # revs on its own line: a `for … in $(cmd)` list does not propagate cmd'"'"'s exit under `set -e` (the shell
+    # only checks the exit of the whole pipeline/expansion at the point of the simple command it feeds), so a
+    # bad OLDTIP (e.g. an unfetched --force-with-lease sha) would otherwise empty the loop instead of failing.
+    echo 'revs=$(git -C "$WT" log --format="%H:%G?" "$OLDTIP..HEAD")'
+    echo 'for sc in $revs; do'
     echo '  sig=${sc##*:}'
     echo '  # N = no signature, B = bad one: never push those. G/U/E carry a signature (U = key not in the allowed'
     echo '  # signers, E = this host cannot verify it, e.g. no gpg.ssh.allowedSignersFile) — the drain reports which.'
@@ -228,6 +232,13 @@ tmp="$job.tmp"
   else echo 'git -C "$WT" push origin "$BR"'; fi
   echo 'git -C "$WT" log --format="pushed %h %G? %s" -1'
 } > "$tmp"
+# --supersede's actual deletion: every check above (--onto, --force-with-lease, --files, signq.py meta) has
+# now had its chance to `exit 2` — only past this point is the new job guaranteed to be installed, so only
+# past this point is dropping the old one safe.
+if [ -n "${cand:-}" ]; then
+  rm -f "$cand"
+  echo "enqueue.sh: --supersede dropped $cbase" >&2
+fi
 mv "$tmp" "$job"
 [ -n "$meta" ] && printf '%s' "$meta" | python3 -c '
 import json,sys; m=json.load(sys.stdin)

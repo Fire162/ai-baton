@@ -139,5 +139,39 @@ class SupersedeRefusesAnAttemptedJob(unittest.TestCase):
             self.assertEqual(list(q.glob("*-parked.sh")), [job], "no second job must have been queued either")
 
 
+class SupersedeDeletionIsDeferredPastValidation(unittest.TestCase):
+    def test_a_later_refusal_leaves_the_candidate_job_untouched(self):
+        # --supersede used to `rm -f` the candidate job as soon as it was found, before the later checks
+        # (--onto format, --force-with-lease, --files, signq.py meta) had a chance to `exit 2`. A refused
+        # enqueue must touch nothing — including the job it would have folded into.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            ctx = tmp / "ws" / ".context"
+            ctx.mkdir(parents=True)
+            wt = _seed_repo(tmp / "ws")
+            r1 = _enqueue(tmp, ctx, wt, "fold-refused", "a.txt", "fix: round one", "t")
+            self.assertEqual(r1.returncode, 0, r1.stdout + r1.stderr)
+            q = ctx / "state" / "sign-queue"
+            first = list(q.glob("*-fold-refused.sh"))
+            self.assertEqual(len(first), 1, r1.stdout + r1.stderr)
+
+            time.sleep(1.05)  # job names are a UTC-second timestamp + topic: force a distinct one (#46, unrelated)
+            # a --files path that is neither in the worktree nor tracked is refused (exit 2) well after the
+            # supersede candidate is found, so this proves the deletion itself waits for that check to pass.
+            (wt / "c.txt").write_text("c\n")
+            msg = tmp / "c.txt.msg.txt"
+            msg.write_text("fix: round two\n")
+            r2 = subprocess.run(["sh", str(ENQUEUE), "fold-refused", str(wt), "main", str(msg),
+                                 "--files", "no-such-file.txt", "--ticket", "none", "--epic", "none",
+                                 "--pr", "none", "--by", "t", "--supersede"],
+                                env=_env(tmp, ctx), capture_output=True, text=True, timeout=60)
+            self.assertEqual(r2.returncode, 2, r2.stdout + r2.stderr)
+            self.assertIn("neither in the worktree nor tracked", r2.stderr)
+            self.assertNotIn("--supersede dropped", r2.stderr, "the fold must not run when the enqueue is refused")
+            self.assertTrue(first[0].exists(), "a refused enqueue must leave the candidate job in place")
+            remaining = list(q.glob("*-fold-refused.sh"))
+            self.assertEqual(remaining, first, "no job may be added or removed by a refused --supersede")
+
+
 if __name__ == "__main__":
     unittest.main()

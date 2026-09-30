@@ -33,8 +33,10 @@ sh $BATON/skills/sign-queue/enqueue.sh <topic> <abs-worktree> <branch> <abs-msg-
   clone never creates that ref). Check with
   `gh api repos/<o>/<r>/branches/<branch> -q .commit.sha` vs local `git rev-parse HEAD` before enqueuing.
 - `--new-branch` for the first push (`push -u`).
-- `--force-with-lease <remote-sha>` when an **already-pushed** branch gets its history rewritten — a second
-  `--onto` re-stack after the upstream branch moved, a fixup — the plain push is rejected as non-fast-forward. The job pushes `--force-with-lease=refs/heads/<branch>:<remote-sha>`,
+- `--force-with-lease <remote-sha>` whenever an **already-pushed** branch is about to run `--onto`/`--rebase`
+  again, or gets a fixup — not only "the upstream moved": the job's `-f` (see the no-op re-stack trap below)
+  always replays and re-signs the whole range, so every commit gets a new sha even when the upstream tip has
+  not moved since the last re-stack, and the plain push is rejected as non-fast-forward either way. The job pushes `--force-with-lease=refs/heads/<branch>:<remote-sha>`,
   so it lands only if the remote tip is still the sha you read via `gh api repos/<o>/<r>/branches/<branch>`;
   a moved remote parks the job as `.failed` instead of clobbering someone's push. Exclusive with `--new-branch`.
 - `--onto <upstream-branch>:<old-base-sha>` for a **stacked** branch whose upstream is itself unsigned/unpushed
@@ -94,6 +96,10 @@ it dropped, then enqueues as usual. It refuses (exit 2, nothing touched) when th
 log or is parked as `<job>.failed` — it was attempted, not just sitting in the queue, and folding into it
 would lose that history; resolve it (`make sign_show` / `sign_log` / `sign_retry`) first instead. No match
 for the topic (and `--by`) is not an error: the job just enqueues normally, same as without the flag.
+**Folding does not merge the dropped job's own content** — its `--files`, message file and
+`--rebase`/`--onto`/`--force-with-lease` flags are gone with it, not carried onto the new enqueue. Pass the
+union of both rounds' `--files` (and whichever of those flags the earlier round needed) on the new call, or
+the earlier round's paths are left uncommitted and never pushed.
 
 ## User side — drain
 
