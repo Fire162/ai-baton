@@ -184,6 +184,23 @@ class Install(Base):
         self.assertFalse(dest.exists())
 
 
+    def test_a_stalled_clone_times_out_without_prompting(self):
+        # setup.sh fetches unattended: a black-holed network or a credential prompt must fail, never hang
+        mod = load_adapter()
+        mod.INSTALL_TIMEOUT = 1
+        bindir, seen = self.t / "fakebin", self.t / "seen"
+        bindir.mkdir()
+        (bindir / "git").write_text(f"#!/bin/sh\necho \"prompt=$GIT_TERMINAL_PROMPT\" > '{seen}'\n"
+                                   f"[ -t 0 ] && echo tty >> '{seen}'\nsleep 30\n", encoding="utf-8")
+        (bindir / "git").chmod(0o755)
+        dest = self.t / "cache" / "pinned"
+        env = dict(hermetic_env(self.t), PATH=f"{bindir}{os.pathsep}{os.environ['PATH']}")
+        with mock.patch.dict(os.environ, env):
+            with self.assertRaisesRegex(OSError, "did not finish within 1s"):
+                mod.install(url="https://example.invalid/r", dest=dest)
+        self.assertEqual(seen.read_text(encoding="utf-8").split(), ["prompt=0"])  # no prompt, stdin not a tty
+        self.assertFalse(dest.exists())
+
 class HooksAreSilentWithoutCtxOrStore(Base):
     """A machine that has not adopted ctx-store sees nothing: exit 0, no output, no call."""
 
@@ -520,6 +537,27 @@ class Adopt(Base):
         self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
         self.assertRegex(r.stdout, r"(?m)^finding: SCHEMA_VIOLATION d/bad")
         self.assertTrue((self.root / "ctx-store.json").exists())
+
+    @unittest.skipUnless(REAL_CTX, "the pinned ctx is not installed on this machine")
+    def test_nested_templates_and_a_session_ledger_validate_clean(self):
+        """A nested `_templates/` scaffold (placeholder frontmatter) and a ledger `session.py end` just wrote are
+        both store-settings exemptions, not findings, on a freshly adopted store."""
+        env = dict(KIT_CTX=str(REAL_CTX), CTX_NO_WALK="1")
+        tdir = self.root / "x" / "_templates"
+        tdir.mkdir(parents=True)
+        (tdir / "y.md").write_text(
+            "---\ntitle: {{TITLE}}\ntype: repo\ndomain: {{DOMAIN}}\ntags: []\nstatus: reference\nupdated: {{DATE}}\n"
+            "---\n\n# {{TITLE}}\n", encoding="utf-8")
+        import importlib.util
+        with mock.patch.dict(os.environ, {"CONTEXT_ROOT": str(self.root)}):
+            spec = importlib.util.spec_from_file_location("session_under_test_e2e", BIN / "session.py")
+            session_mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(session_mod)  # type: ignore[union-attr]
+        session_mod._ledger_append({"session": "e2e", "heartbeat": "2026-09-28T10:00:00Z"}, {"turns": 1})
+        self.assertTrue((self.root / "sessions" / "_ledger.md").read_text(encoding="utf-8").startswith("---\n"))
+        r = self.adapter("adopt", **env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("finding:", r.stdout)
 
 
 class PreToolUseDeny(Base):
