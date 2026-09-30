@@ -3,8 +3,8 @@ name: sign-queue
 description: "Shared queue for commits that must be GPG/SSH-signed and pushed by the user on the host: a session enqueues a job (worktree, branch, message file, flags), the user drains it with one command. Use for every commit or push in a signed-commits repo; never paste git one-liners. Inert where `systems.signed_commits` is false."
 compatibility: "Designed for Claude Code; needs signed_commits (systems.*)"
 metadata:
-  version: "17"
-  updated: "2026-09-28"
+  version: "18"
+  updated: "2026-09-30"
   reviewed: "2026-09-27"
   requires: "signed_commits"
 ---
@@ -44,6 +44,12 @@ sh $BATON/skills/sign-queue/enqueue.sh <topic> <abs-worktree> <branch> <abs-msg-
   the real upstream and the placeholder is dropped. Enqueue the upstream's job first (same drain is fine — jobs run
   in enqueue order); if that job fails, this one fails on the fetch and is parked, nothing is pushed on a stale base.
   Exclusive with `--rebase`.
+  - **The no-op re-stack trap:** if the upstream tip has not moved since your own worktree was last rebased onto
+    it (wherever that ran — signing key absent, so no `-S`), a plain `rebase --onto`/`--rebase` is a no-op: git
+    leaves every existing commit exactly as it is instead of replaying it, so that earlier unsigned commit stays
+    unsigned even though the job reports a signed HEAD. The job always force-rebases (`-S -f`) so the range is
+    replayed — and re-signed — every time, and it verifies every commit about to be pushed (not just HEAD) before
+    pushing at all, refusing (parked, `UNSIGNED <sha>`) rather than land one that slipped through.
 - **One staging rule, same as `signed-git-commits`: stage explicit paths, never a silent `add -A`.**
   `--files "a b"` stages only those paths — the norm, especially in a worktree with unrelated noise. Each
   path is single-quoted in the job: route dirs of some web frameworks contain `$param`, and the unquoted

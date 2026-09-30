@@ -158,13 +158,38 @@ tmp="$job.tmp"
     echo 'git -C "$WT" fetch origin "$BR"'
     # FETCH_HEAD, not origin/$BR: a single-branch / partial clone (refspec = main only)
     # never creates refs/remotes/origin/<branch>, so origin/$BR is an "invalid upstream".
-    echo 'git -C "$WT" rebase -S FETCH_HEAD'
+    # -f/--force-rebase: without it, a rebase whose upstream did not move since the branch was last
+    # based on it is a no-op — git leaves every existing commit exactly as it is, sandbox-made ones
+    # included, instead of replaying (and re-signing) them. -f always replays the range, so a commit
+    # made unsigned in a sandbox comes out signed on this, the host side of the queue.
+    echo 'git -C "$WT" rebase -S -f FETCH_HEAD'
   fi
   if [ -n "$onto" ]; then
     echo "UP=$(sq "$onto_br")"; echo "OLD_BASE=$(sq "$onto_base")"
     echo '# stacked branch: replay our commits on the upstream branch'"'"'s pushed tip, dropping the local placeholder'
     echo 'git -C "$WT" fetch origin "$UP"'
-    echo 'git -C "$WT" rebase -S --onto FETCH_HEAD "$OLD_BASE"'
+    # -f: same trap as --rebase above — a re-stack whose upstream tip has not moved since the last
+    # enqueue is otherwise a no-op and leaves sandbox-made commits unsigned.
+    echo 'git -C "$WT" rebase -S -f --onto FETCH_HEAD "$OLD_BASE"'
+  fi
+  # Belt and braces on top of -f above: verify every commit about to be pushed, not just HEAD (a
+  # signed HEAD says nothing about the commits beneath it). OLDTIP is the remote tip the push is
+  # landing on: FETCH_HEAD when a rebase/re-stack just ran (it fetched the relevant remote tip),
+  # else the inspected --force-with-lease sha. A plain push / --new-branch has no such known tip to
+  # diff against here and is left to the existing per-commit `commit -S` guarantee.
+  if [ -n "$onto" ] || [ $rebase = 1 ]; then
+    echo 'OLDTIP=$(git -C "$WT" rev-parse FETCH_HEAD)'
+  elif [ -n "$lease" ]; then
+    echo "OLDTIP=$(sq "$lease")"
+  fi
+  if [ -n "$onto" ] || [ $rebase = 1 ] || [ -n "$lease" ]; then
+    echo 'unsigned=""'
+    echo 'for sc in $(git -C "$WT" log --format="%H:%G?" "$OLDTIP..HEAD"); do'
+    echo '  sig=${sc##*:}'
+    echo '  [ "$sig" = G ] || unsigned="$unsigned ${sc%%:*}"'
+    echo 'done'
+    echo '# never push a row the drain would have to report as unsigned: refuse and park the job instead'
+    echo 'if [ -n "$unsigned" ]; then echo "UNSIGNED$unsigned"; exit 1; fi'
   fi
   if [ $newbr = 1 ]; then echo 'git -C "$WT" push -u origin "$BR"'
   elif [ -n "$lease" ]; then echo "LEASE=$(sq "$lease")"; echo '# rewritten history of an already-pushed branch: land only if the remote tip is still the one we inspected'; echo 'git -C "$WT" push --force-with-lease="refs/heads/$BR:$LEASE" origin "$BR"'
