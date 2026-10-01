@@ -240,6 +240,47 @@ class AutoCommentGate(unittest.TestCase):
         self.assertFalse(row["auto_comment"]["eligible"])
         self.assertEqual(row["auto_comment"]["reason"], "follow-up")
 
+    # --- re-review excluded by default: a direct re-request on a PR we already reviewed on an older head
+    # (kind=re_review) must not ride the trailer on the strength of the prior review's prio alone ---
+
+    def test_re_review_is_not_eligible_by_default(self):
+        self.write_config(prios=[1])
+        old_head = "6" * 40
+        new_head = "7" * 40
+        env = self.env(
+            STUB_DIRECT_JSON=json.dumps([direct_entry(501, "alice", "2026-01-02T00:00:00Z")]),
+            STUB_PR_501_JSON=json.dumps(pr_json(501, "alice", new_head)),
+            STUB_REVIEWS_501_JSON=json.dumps([
+                {"user": {"login": ME}, "state": "APPROVED", "body": "", "commit_id": old_head},
+            ]),
+        )
+        r = self.run_scan(env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        row = self.row(501)
+        self.assertEqual(row["prio"], 1)
+        self.assertEqual(row["kind"], "re_review")
+        self.assertFalse(row["auto_comment"]["eligible"])
+        self.assertEqual(row["auto_comment"]["reason"], "re-review")
+
+    # --- re-review opted back in: `include_re_review: true` makes the same row eligible again ---
+
+    def test_re_review_is_eligible_when_include_re_review_true(self):
+        self.write_config(prios=[1], include_re_review=True)
+        old_head = "8" * 40
+        new_head = "9" * 40
+        env = self.env(
+            STUB_DIRECT_JSON=json.dumps([direct_entry(502, "alice", "2026-01-02T00:00:00Z")]),
+            STUB_PR_502_JSON=json.dumps(pr_json(502, "alice", new_head)),
+            STUB_REVIEWS_502_JSON=json.dumps([
+                {"user": {"login": ME}, "state": "APPROVED", "body": "", "commit_id": old_head},
+            ]),
+        )
+        r = self.run_scan(env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        row = self.row(502)
+        self.assertEqual(row["kind"], "re_review")
+        self.assertTrue(row["auto_comment"]["eligible"], row["auto_comment"])
+
     # --- cap: at most `max_per_tick` rows are marked eligible per tick, newest (processed) first ---
 
     def test_cap_limits_eligible_rows_to_max_per_tick(self):

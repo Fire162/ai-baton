@@ -32,10 +32,15 @@ DEEP=$(jq -r .deep_lines "$CFG"); BOTS=$(jq -c .bots "$CFG")
 AUTO_MODE=$(jq -r '.auto_approve.mode // "off"' "$CFG"); AUTO_BOTS=$(jq -c '.auto_approve.bot_authors // []' "$CFG")
 AUTO_MAXF=$(jq -r '.auto_approve.max_files // 10' "$CFG"); AUTO_MAXL=$(jq -r '.auto_approve.max_lines // 200' "$CFG")
 # unattended auto-COMMENT gate for direct review requests (opt-in, default off) — no gh calls, computed
-# straight from the row's own prio/kind/author, same as the trivial-approve pre-filter above.
+# straight from the row's own prio/kind/author, same as the trivial-approve pre-filter above. A `re_review`
+# row (we already reviewed an older head, now re-requested) is excluded by default — a re-request must not
+# ride the AUTO-COMMENT trailer on the strength of the prior review's prio alone; `include_re_review` opts
+# a direct re-request back in explicitly.
 AUTOC_MODE=$(jq -r '.auto_comment.mode // "off"' "$CFG"); AUTOC_PRIOS=$(jq -c '.auto_comment.prios // [1]' "$CFG")
 AUTOC_MAX=$(jq -r '.auto_comment.max_per_tick // 3' "$CFG")
+AUTOC_REREVIEW=$(jq -r '.auto_comment.include_re_review // false' "$CFG")
 TRIVIAL=$(dirname "$0")/../pr-review/scripts/trivial-check.py
+ROW_STATE=$(dirname "$0")/row-state.py
 eval "$(python3 "$KIT/context-db/bin/kit_profile.py" gh-env)"  # github.sandbox_token_prefix, if any
 REPOS=()
 while IFS= read -r _repo; do REPOS+=("$_repo"); done < <(jq -r '.sweep_repos[]' "$CFG")  # a loop, not a bash-4-only array builtin — macOS ships bash 3.2
@@ -173,12 +178,14 @@ while IFS= read -r row; do
   elif [ "$hlen" = 0 ]; then prio_val=4
   else prio_val=5; fi
   # unattended auto-COMMENT gate (opt-in, `auto_comment.mode`): direct review requests only by default
-  # (`prios`), never a follow-up, never a bot author, never a head already `held` (a STOP finding sent it
-  # back to the interactive walk — it stays an ordinary row but never re-counts toward the cap), capped at
-  # `max_per_tick` runners this tick.
+  # (`prios`), never a follow-up, never a re-request on a PR we already reviewed (unless
+  # `auto_comment.include_re_review`), never a bot author, never a head already `held` (a STOP finding sent
+  # it back to the interactive walk — it stays an ordinary row but never re-counts toward the cap), capped
+  # at `max_per_tick` runners this tick.
   ac_eligible=false; ac_reason="mode off"
   if [ "$AUTOC_MODE" != off ]; then
     if [ "$kind" = follow_up ]; then ac_reason="follow-up"
+    elif [ "$kind" = re_review ] && [ "$AUTOC_REREVIEW" != true ]; then ac_reason="re-review"
     elif has held; then ac_reason="held"
     elif in_list "$author" "$BOTS"; then ac_reason="bot author"
     elif ! jq -ne --argjson p "$prio_val" --argjson list "$AUTOC_PRIOS" '$list | index($p) != null' >/dev/null; then ac_reason="prio $prio_val not in auto_comment.prios"
@@ -202,20 +209,24 @@ done < "$OUT/union.jsonl"
 
 # 4. rank + present — `new` and `auto` are counted over the SHOWN rows, which are exactly the rows --mark records
 jq -s 'sort_by([.prio, (.updated|explode|map(-.))])' "$OUT/candidates.jsonl" > "$OUT/queue.json"
+# one `state` (+ `section`, `state_label`) per row from the ledger's latest entry for that PR on the
+# current head — no extra gh call, the brief renders by `.section` instead of inventing the grouping itself.
+python3 "$ROW_STATE" --queue "$OUT/queue.json" --ledger "$LEDGER" > "$OUT/queue.json.state" \
+  && mv "$OUT/queue.json.state" "$OUT/queue.json"
 shown=$(jq --argjson m "$MAXROWS" '.[:$m] | length' "$OUT/queue.json"); cand=$(jq length "$OUT/queue.json")
 newc=$(jq --argjson m "$MAXROWS" '[.[:$m][] | select(.surfaced|not)] | length' "$OUT/queue.json")
 autoc=$(jq --argjson m "$MAXROWS" '[.[:$m][] | select(.auto.eligible // false)] | length' "$OUT/queue.json")
 autocmt=$(jq --argjson m "$MAXROWS" '[.[:$m][] | select(.auto_comment.eligible // false)] | length' "$OUT/queue.json")
 if [ "$QUIET" = 0 ]; then
-  printf '%-4s %-28s %-10s %-4s %-18s %-9s %-7s %-14s %s\n' PRIO PR SRC KIND AUTHOR LINES/F HUMANS THREADS/BOT TITLE
+  printf '%-4s %-28s %-10s %-4s %-18s %-9s %-7s %-14s %-24s %s\n' PRIO PR SRC KIND AUTHOR LINES/F HUMANS THREADS/BOT STATE TITLE
   jq -r --argjson m "$MAXROWS" '.[:$m][]
       | (.repo|split("/")[1]) as $r | (if .surfaced then "" else " *" end) as $star
       | (if .deep then "!" elif (.auto.eligible // false) then "A" elif (.auto_comment.eligible // false) then "C" else "" end) as $bang
       | (if (.degraded|index("reviews")) then "?" else (.humans|map(.state[:3])|join(",")) end) as $h
       | ((.threads.open // "?")|tostring) as $t | ({green:"🟢",yellow:"🟡",red:"🔴"}[.bot] // "-") as $b
-      | [(.prio|tostring), ($r+"#"+(.pr|tostring)+$star), .src, .kind[:4], .author[:18], ((.lines|tostring)+"/"+(.files|tostring)+$bang), (if $h=="" then "-" else $h end), ($t+"/"+$b), .title[:60]] | @tsv' "$OUT/queue.json" \
-    | awk -F'\t' '{printf "%-4s %-28s %-10s %-4s %-18s %-9s %-7s %-14s %s\n",$1,$2,$3,$4,$5,$6,$7,$8,$9}'
-  echo "-- * = not surfaced before on this head; ! = over deep threshold ($DEEP lines); A = trivial-PR auto-approve eligible (mode=$AUTO_MODE); C = unattended auto-COMMENT eligible (mode=$AUTOC_MODE); ? = review state unavailable (see errors); LINES/F = added+deleted / files; HUMANS = last state per human reviewer"
+      | [(.prio|tostring), ($r+"#"+(.pr|tostring)+$star), .src, .kind[:4], .author[:18], ((.lines|tostring)+"/"+(.files|tostring)+$bang), (if $h=="" then "-" else $h end), ($t+"/"+$b), (.state_label // "?"), .title[:60]] | @tsv' "$OUT/queue.json" \
+    | awk -F'\t' '{printf "%-4s %-28s %-10s %-4s %-18s %-9s %-7s %-14s %-24s %s\n",$1,$2,$3,$4,$5,$6,$7,$8,$9,$10}'
+  echo "-- * = not surfaced before on this head; ! = over deep threshold ($DEEP lines); A = trivial-PR auto-approve eligible (mode=$AUTO_MODE); C = unattended auto-COMMENT eligible (mode=$AUTOC_MODE); ? = review state unavailable (see errors); LINES/F = added+deleted / files; HUMANS = last state per human reviewer; STATE = brief section (SKILL.md § Answer)"
 fi
 echo "summary: union=$total candidates=$cand shown=$shown new=$newc auto=$autoc auto_mode=$AUTO_MODE auto_comment=$autocmt auto_comment_mode=$AUTOC_MODE dropped(bots=$dropped_bot draft=$dropped_draft stale>${DAYS}d=$dropped_stale done=$dropped_done skipped=$dropped_skip approved=$dropped_approved cap=$dropped_cap failed=$dropped_fail) degraded=$degraded errors=$FAILS retries=$RETRIES out=$OUT"
 if [ "$MARK" = 1 ] && [ "$newc" -gt 0 ]; then
