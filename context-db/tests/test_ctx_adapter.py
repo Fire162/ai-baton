@@ -1090,6 +1090,21 @@ class CompactBriefDeadline(Base):
         self.assertLessEqual(clock[0], self.mod.COMPACT_DEADLINE + 1)
 
 
+    def test_a_session_row_from_a_store_not_re_adopted_yet_is_no_context_doc(self):
+        """A store adopted before the kit dropped `resolve.fields` still answers `ctx resolve` with the
+        session's own row until `adopt` runs again. `_resolve_epic_doc` reads that as no context doc, never
+        as the context doc, and makes no second call."""
+        calls = []
+
+        def ctx_naming_the_session(ctx, store, *args, timeout=self.mod.HOOK_TIMEOUT):
+            calls.append(args[0])
+            return subprocess.CompletedProcess(args, 0, stdout="sessions/lane-topic · session\n", stderr="")
+
+        self.mod._ctx = ctx_naming_the_session
+        self.assertIsNone(self.mod._resolve_epic_doc(self.fake, [], "acme/widgets#42", lambda: 9.0))
+        self.assertEqual(calls, ["resolve"])
+
+
 class PreToolUseDeny(Base):
     """A direct Write/Edit of a store doc is denied on an adopted store; everything else gets no decision."""
 

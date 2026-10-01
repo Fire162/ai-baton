@@ -680,7 +680,10 @@ def _resolve_epic_doc(ctx: Path, store: list[str], epic_key: str, remaining: Cal
     if r.returncode != 0:
         return None
     row = _lines(r.stdout)
-    return row[0].split(" · ", 1)[0].strip() or None if row else None
+    doc = row[0].split(" · ", 1)[0].strip() if row else ""
+    # a session row here means the store still carries the old `resolve.fields` (adopted before the kit
+    # dropped it, not re-adopted since): no context doc is a truer answer than the session naming itself
+    return doc if doc and not doc.startswith("sessions/") else None
 
 
 def _epic_remaining_head(ctx: Path, store: list[str], doc_key: str, remaining: Callable[[], float]) -> list[str]:
