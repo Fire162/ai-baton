@@ -9,6 +9,12 @@ labels: []
 
 <!-- The change in how sessions behave, in 1–3 sentences. -->
 
+## Whiteboard
+
+<!-- Only when the change moves a session flow (a step order, a hook, a hand-off): one line — where it
+     plugs in → what changes — or `Sketch: SKIP (<reason>)`. This is the issue's own gate; the drawing itself
+     follows `docs/diagrams.md` (where a ticket draws only at `Sizing: opus`). -->
+
 ## Why
 
 <!-- What went wrong or is missing — the session, skill or machine where it showed up. -->
