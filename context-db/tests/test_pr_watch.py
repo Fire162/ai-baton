@@ -24,9 +24,13 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from tests import hermetic_env  # noqa: E402
 
 KIT = Path(__file__).resolve().parents[2]
 SCRIPT = KIT / "skills" / "pr-watch" / "pr-watch.sh"
@@ -221,7 +225,8 @@ class PrWatchStub(unittest.TestCase):
         reviews = [{"user": {"login": "github-actions[bot]"}, "state": "APPROVED", "commit_id": FULL}]
         r = self.run_watch(reviews=json.dumps(reviews), compare_behind=3, identity_env={"PR_WATCH_SELF": "tester"})
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn(f"PR {PR} SYNCED with main", r.stdout)
+        self.assertIn(f"PR {PR} SYNCED with main", r.stderr)  # bookkeeping, not a decision — stderr only
+        self.assertNotIn("SYNCED", r.stdout)
         self.assertNotIn("but APPROVED", r.stdout)
 
     def test_a_human_approval_still_blocks_the_sync(self):
@@ -230,6 +235,7 @@ class PrWatchStub(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("but APPROVED", r.stdout)
         self.assertNotIn("SYNCED", r.stdout)
+        self.assertNotIn("SYNCED", r.stderr)
 
     # --- the auto-merge identity must come from the configured `github.bots` list, never a hardcoded login ---
 
@@ -238,7 +244,8 @@ class PrWatchStub(unittest.TestCase):
         reviews = [{"user": {"login": "custom-ci[bot]"}, "state": "APPROVED", "commit_id": FULL}]
         r = self.run_watch(reviews=json.dumps(reviews), compare_behind=3, identity_env={"PR_WATCH_SELF": "tester"})
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn(f"PR {PR} SYNCED with main", r.stdout)
+        self.assertIn(f"PR {PR} SYNCED with main", r.stderr)
+        self.assertNotIn("SYNCED", r.stdout)
         self.assertNotIn("but APPROVED", r.stdout)
 
     def test_github_actions_is_not_hardcoded_only_the_configured_list_is_excluded(self):
@@ -250,6 +257,7 @@ class PrWatchStub(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("but APPROVED", r.stdout)
         self.assertNotIn("SYNCED", r.stdout)
+        self.assertNotIn("SYNCED", r.stderr)
 
     def test_a_missing_bots_key_is_a_startup_error_not_a_silent_empty_list(self):
         (self.env_dir / "config.json").write_text(json.dumps({"github": {"review_bot": "", "sandbox_token_prefix": ""}}))
@@ -266,8 +274,9 @@ class PrWatchStub(unittest.TestCase):
     def test_a_sync_records_the_head_it_synced_from_and_promises_no_head_moved(self):
         r = self.run_watch(compare_behind=3, identity_env={"PR_WATCH_SELF": "tester"})
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn(f"PR {PR} SYNCED with main", r.stdout)
-        self.assertIn("no HEAD MOVED follows", r.stdout)
+        self.assertIn(f"PR {PR} SYNCED with main", r.stderr)
+        self.assertIn("no HEAD MOVED follows", r.stderr)
+        self.assertNotIn("SYNCED", r.stdout)
         self.assertEqual((self.state_dir() / "sync_from").read_text().strip(), FULL)
 
     def test_own_sync_merge_head_is_silent_and_the_bot_is_re_requested(self):
@@ -340,6 +349,98 @@ class PrWatchStub(unittest.TestCase):
         self.assertNotIn("HEAD MOVED", r.stdout)
         self.assertNotIn("BOT REVIEW", r.stdout)
         self.assertEqual((self.state_dir() / "head").read_text().strip(), self.NEW[:9])
+
+    # --- only the events a session can act on reach stdout; bookkeeping stays on stderr ---
+
+    def git(self, *args: str, cwd: Path) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", *args], cwd=cwd, env=hermetic_env(self.tmp), check=True,
+                               capture_output=True, text=True)
+
+    def make_worktree_commit(self) -> tuple[Path, str]:
+        """A real git object a `PR_WATCH_WORKTREE` check can `cat-file -e` — own-push detection shells out to
+        real git, not the stubbed `gh`."""
+        wt = self.tmp / "worktree"
+        wt.mkdir()
+        self.git("init", "-q", cwd=wt)
+        (wt / "f.txt").write_text("x")
+        self.git("add", ".", cwd=wt)
+        self.git("commit", "-q", "-m", "x", cwd=wt)
+        return wt, self.git("rev-parse", "HEAD", cwd=wt).stdout.strip()
+
+    def test_a_422_after_the_pr_merged_in_the_gap_emits_only_merged(self):
+        r = self.run_watch(compare_behind=1, extra_env={"STUB_UPDATE_BRANCH_FAIL": "HTTP 422: head ref does not exist"},
+                            identity_env={"PR_WATCH_SELF": "tester"})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stdout, f"PR {PR} MERGED\n")
+        self.assertNotIn("BEHIND", r.stdout)
+
+    def test_a_stale_review_on_an_old_head_is_dropped_the_current_head_one_still_fires(self):
+        old_head = "c" * 40
+        self.seed_state(head=HEAD9)
+        reviews = [{"id": 1, "user": {"login": "alice"}, "state": "CHANGES_REQUESTED", "commit_id": old_head},
+                   {"id": 2, "user": {"login": "bob"}, "state": "APPROVED", "commit_id": FULL}]
+        r = self.run_watch(reviews=json.dumps(reviews), identity_env={"PR_WATCH_SELF": "tester"})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn(f"PR {PR} NEW: review APPROVED by bob", r.stdout)
+        self.assertNotIn("alice", r.stdout)
+        self.assertNotIn("CHANGES_REQUESTED", r.stdout)
+        self.assertIn("dropping stale review 1 (CHANGES_REQUESTED by alice)", r.stderr)
+
+    def test_an_own_push_named_by_worktree_and_login_is_tracked_silently(self):
+        wt, sha = self.make_worktree_commit()
+        push = {"parents": [{"sha": self.OLD}], "committer": {"login": "tester"},
+                "commit": {"committer": {"date": "2026-01-01T00:00:00Z"}}}
+        r = self.run_watch(arg_head=self.OLD[:9], live_head=sha, commit=push, me_login="tester",
+                            identity_env={"PR_WATCH_SELF": "tester", "PR_WATCH_WORKTREE": str(wt)})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("HEAD MOVED", r.stdout)
+        self.assertIn("own push", r.stderr)
+        self.assertEqual((self.state_dir() / "head").read_text().strip(), sha[:9])
+
+    def test_a_push_with_no_worktree_hint_is_still_head_moved(self):
+        push = {"parents": [{"sha": self.OLD}], "committer": {"login": "tester"},
+                "commit": {"committer": {"date": "2026-01-01T00:00:00Z"}}}
+        r = self.run_watch(arg_head=self.OLD[:9], commit=push, identity_env={"PR_WATCH_SELF": "tester"})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn(f"PR {PR} HEAD MOVED to {self.NEW[:9]}", r.stdout)
+
+    def test_a_push_by_someone_else_is_still_head_moved_even_with_a_worktree_hint(self):
+        wt, sha = self.make_worktree_commit()
+        push = {"parents": [{"sha": self.OLD}], "committer": {"login": "carol"},
+                "commit": {"committer": {"date": "2026-01-01T00:00:00Z"}}}
+        r = self.run_watch(arg_head=self.OLD[:9], live_head=sha, commit=push, me_login="tester",
+                            identity_env={"PR_WATCH_SELF": "tester", "PR_WATCH_WORKTREE": str(wt)})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn(f"PR {PR} HEAD MOVED to {sha[:9]}", r.stdout)
+
+    # --- the scripted lifecycle: open, reviewed on an old head, pushed, approved on the new head, merged ---
+
+    def test_pr_lifecycle_open_review_push_approve_merge_prints_only_actionable_lines(self):
+        wt, new_head = self.make_worktree_commit()
+        old_head = "c" * 40
+        # the watcher already ran at least one cycle (init=1): the stale CHANGES_REQUESTED from before the push
+        # was already reported then, and must not repeat; only what changed since is actionable this cycle.
+        self.seed_state(head=old_head[:9])
+        push = {"parents": [{"sha": old_head}], "committer": {"login": "tester"},
+                "commit": {"committer": {"date": "2026-01-01T00:00:00Z"}}}
+        reviews = [
+            {"id": 1, "user": {"login": "alice"}, "state": "CHANGES_REQUESTED", "commit_id": old_head},
+            {"id": 2, "user": {"login": "bob"}, "state": "APPROVED", "commit_id": new_head},
+        ]
+        rollup = [self.check_run("unit-tests", "FAILURE")]
+        r = self.run_watch(arg_head=old_head[:9], live_head=new_head, commit=push, reviews=json.dumps(reviews),
+                            rollup=json.dumps(rollup), me_login="tester", state="MERGED",
+                            identity_env={"PR_WATCH_SELF": "tester", "PR_WATCH_WORKTREE": str(wt)})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stdout, (
+            f"PR {PR} CHECK NOT GREEN: unit-tests: FAILURE;\n"
+            f"PR {PR} NEW: review APPROVED by bob\n"
+            f"PR {PR} MERGED\n"
+        ))
+        self.assertNotIn("HEAD MOVED", r.stdout)
+        self.assertNotIn("alice", r.stdout)
+        self.assertIn("own push", r.stderr)
+        self.assertIn("dropping stale review 1", r.stderr)
 
 
 if __name__ == "__main__":

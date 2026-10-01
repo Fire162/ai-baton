@@ -2,9 +2,9 @@
 name: pr-watch
 description: "Low-noise PR watch: one Monitor per repo per session surfaces only actionable events (review-bot verdict, others' reviews/comments, a settled red check, head moves, merge/close), keeps waiting branches updated with base, merges via `pr-merge.sh` once gates hold. Park rule: sign-off, idle windows, human gate. For every PR your session owns."
 metadata:
-  version: "23"
-  updated: "2026-09-30"
-  reviewed: "2026-09-27"
+  version: "24"
+  updated: "2026-10-01"
+  reviewed: "2026-10-01"
 ---
 
 # pr-watch — stay on top of your PRs without the noise
@@ -56,10 +56,14 @@ as the bot-mode phase 3 loop.
 
 ## What it emits (and what it deliberately does not)
 
-One line per actionable event — bot verdict, human comment/approval, checks settling red, head moves
-(pushed, synced, or stale), conflicts, merge/close, or a query error — each with what to do about it;
-filtered out on purpose: your own comments/reviews, the bot's in-thread replies, repeated non-green
-states. The full per-line table: `reference/events.md`.
+One stdout line per actionable event — bot verdict on the current head, human comment/approval, checks
+settling red, a real head move, conflicts, merge/close, or a query error — each with what to do about
+it. Bookkeeping the session has nothing to do about goes to stderr instead (the Monitor output file,
+never a wake-up): its own `update-branch` sync, a head move this session's own push produced (named by
+committer login + a local git object in `PR_WATCH_WORKTREE`, when set — unset it and every push reads
+as a real `HEAD MOVED`), and a review whose `commit_id` is not the current head (stale, dropped with a
+note). Also filtered out on purpose: your own comments/reviews, the bot's in-thread replies, repeated
+non-green states. The full per-line table: `reference/events.md`.
 
 ## Auto-sync with the base branch (since 2026-09-21)
 
