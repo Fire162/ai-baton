@@ -17,8 +17,12 @@ const load = async (name) => (await import(pathToFileURL(req.resolve(name)).href
 let JSDOM, DOMPurifyFactory, mermaid;
 try {
   ({ JSDOM } = await load('jsdom'));
+  const dom = new JSDOM('<!DOCTYPE html><body></body>', { pretendToBeVisual: true });
+  globalThis.window = dom.window;
+  globalThis.document = dom.window.document;
   DOMPurifyFactory = await load('dompurify');
   mermaid = await load('mermaid');
+  globalThis.DOMPurify = DOMPurifyFactory(dom.window);
 } catch (e) {
   const skillDir = path.dirname(fileURLToPath(import.meta.url));
   console.error(`FAIL cannot resolve jsdom/dompurify/mermaid from ${process.cwd()}: ${String(e.message).split('\n')[0]}`);
@@ -26,10 +30,6 @@ try {
     `\`npm ci --no-audit --no-fund\` there, then run this script with that dir as your CWD.`);
   process.exit(2);
 }
-const dom = new JSDOM('<!DOCTYPE html><body></body>', { pretendToBeVisual: true });
-globalThis.window = dom.window;
-globalThis.document = dom.window.document;
-globalThis.DOMPurify = DOMPurifyFactory(dom.window);
 mermaid.initialize({ startOnLoad: false });
 
 const args = process.argv.slice(2);
