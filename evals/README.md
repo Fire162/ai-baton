@@ -83,6 +83,6 @@ suite or a behaviour case is added or renamed.
 | `ticket-close` | 5+5 | — |
 | `ticket-open` | 5+5 | — |
 | `ticket-pickup` | 6+6 | — |
-| `ticket-update` | 6+6 | — |
+| `ticket-update` | 6+6 | `ticket-update-behaviour-pivot-no-marker-no-redraw` |
 
 Plus `kit-review-*` (8 cases, `docs/REVIEW.md` proof cases — not tied to one skill).
