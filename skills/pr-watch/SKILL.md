@@ -62,7 +62,7 @@ it. Bookkeeping the session has nothing to do about goes to stderr instead (the 
 never a wake-up): its own `update-branch` sync, a head move this session's own push produced (named by
 committer login + a local git object in `PR_WATCH_WORKTREE`, when set — unset it and every push reads
 as a real `HEAD MOVED`), and a review whose `commit_id` is not the current head (stale, dropped with a
-note). Also filtered out on purpose: your own comments/reviews, the bot's in-thread replies, repeated
+note — except an approval, which still counts toward the merge and is emitted with `(on older head <sha>)`). Also filtered out on purpose: your own comments/reviews, the bot's in-thread replies, repeated
 non-green states. The full per-line table: `reference/events.md`.
 
 ## Auto-sync with the base branch (since 2026-09-21)

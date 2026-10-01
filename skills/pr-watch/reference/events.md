@@ -5,13 +5,13 @@ session has nothing to do about — goes to stderr instead (the Monitor output f
 the watcher's own `update-branch` sync (`SYNCED`, `reference/auto-sync.md`), its own re-request of the
 bot after that sync, a head move this session's own push produced (named by committer login + a local
 git object in `PR_WATCH_WORKTREE`, when set), and a review whose `commit_id` is not the PR's current
-head (stale — superseded by the re-review its own push already drew).
+head (stale — superseded by the re-review its own push already drew; an approval is the exception, below).
 
 | Line | Meaning | Do |
 |---|---|---|
 | `PR N BOT REVIEW on <head>: green\|yellow\|red` | the review bot (`github.review_bot`) posted a full review for this head — the color from its `### Assessment:` line, via the shared `bot-verdict.sh` helper | read threads; fix or reply; resolve; re-request the bot after a push |
 | `PR N NEW: review comment <id> by <login> (top)` | a human (or the bot's first-pass thread) commented | address it |
-| `PR N NEW: review APPROVED by <login>` | human approval **on the current head** — an older head's verdict is dropped as stale, with a stderr note | update-branch if BEHIND, confirm bot verdict on the final head, merge |
+| `PR N NEW: review APPROVED by <login>` | human approval **on the current head**; `… (on older head <sha>)` marks one given on an earlier head — it still counts toward the merge unless the branch rule dismisses stale reviews. Any other verdict on an older head is dropped as stale, with a stderr note | update-branch if BEHIND, confirm bot verdict on the final head, merge |
 | `PR N CHECK NOT GREEN: …` | the check suite settled and some checks failed/cancelled — **one line per head**, listing all of them | investigate (a check cancelled right after a draft toggle is normal — the rerun follows) |
 | `PR N HEAD MOVED to <sha>` | someone pushed or clicked Update branch — never the watcher's own sync, and never this session's own push when `PR_WATCH_WORKTREE` names a local checkout (reference/auto-sync.md) | re-request the bot · `diagram-plan.py --check`; DRIFT → fork pr-event-brief → redraw |
 | `PR N RE-REQUEST of <bot> on <sha> failed after the auto-sync: …` | the remove-and-re-add of the review bot after the watcher's own sync was refused (403, 422, rate limit) | re-request by hand: DELETE then POST `requested_reviewers` (reference/rules.md) |
@@ -23,4 +23,4 @@ head (stale — superseded by the re-review its own push already drew).
 | `ERROR <repo>#<pr> <gh stderr first line>` (or `ERROR <repo> startup: …` before any PR is polled) | a `gh`/`graphql` call failed (auth, rate limit, the PR/repo is gone), or the bot-login lookup failed at startup — no `PR N` prefix, since it is not a state change | a one-off is transient, ignore it; the same error every cycle means the PR or token is gone — stop the watch or fix auth. **Never fork `pr-event-brief` for this line** — it is not a PR event, there is nothing on the PR to triage |
 
 Filtered out on purpose: your own comments/reviews, the review bot's in-thread replies ("Perfect, thanks…"),
-repeated non-green states, and a stale review (one whose `commit_id` is not the current head).
+repeated non-green states, and a stale review (one whose `commit_id` is not the current head, unless it is an approval).

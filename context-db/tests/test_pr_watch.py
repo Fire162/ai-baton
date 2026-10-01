@@ -386,6 +386,17 @@ class PrWatchStub(unittest.TestCase):
         self.assertNotIn("CHANGES_REQUESTED", r.stdout)
         self.assertIn("dropping stale review 1 (CHANGES_REQUESTED by alice)", r.stderr)
 
+    def test_an_approval_on_an_old_head_is_still_emitted_marked_with_its_head(self):
+        # it keeps counting toward the merge unless the branch rule dismisses stale reviews — dropping it would
+        # leave a mergeable PR waiting on a session that was never told
+        old_head = "c" * 40
+        self.seed_state(head=HEAD9)
+        reviews = [{"id": 1, "user": {"login": "alice"}, "state": "APPROVED", "commit_id": old_head}]
+        r = self.run_watch(reviews=json.dumps(reviews), identity_env={"PR_WATCH_SELF": "tester"})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn(f"PR {PR} NEW: review APPROVED by alice (on older head ccccccccc)", r.stdout)
+        self.assertNotIn("dropping stale review", r.stderr)
+
     def test_an_own_push_named_by_worktree_and_login_is_tracked_silently(self):
         wt, sha = self.make_worktree_commit()
         push = {"parents": [{"sha": self.OLD}], "committer": {"login": "tester"},
