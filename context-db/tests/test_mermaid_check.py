@@ -116,7 +116,7 @@ class MermaidCheckTest(unittest.TestCase):
         self.assertIn("OK (flowchart)", r.stdout)
 
     def test_syntax_error_fails(self):
-        # A real syntax error must still fail with exit 1 and report FAIL.
+        # A syntax error in a mermaid block fails the check with exit 1 and reports FAIL.
         body = "```mermaid\nflowchart LR\n  a --> SYNTAX_ERROR\n```\n"
         r = self.run_check("syntax-err.md", body)
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
