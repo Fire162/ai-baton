@@ -267,7 +267,8 @@ test loads. It covers `kb.py`
 schema, env-store checks, `--stale`, `--no-env`), `gen_index.py` / `verify.py` / `new.sh` on a throw-away
 `CONTEXT_ROOT`, `gen_sessions.py`, `commit_style.py`, `eval_check.py` (on a throw-away kit), `session_stats.py` + `transcripts.py` on a synthetic
 transcript, `frontmatter.py` + `migrate_frontmatter.py`, and the pure functions of `pr-review/scripts/trivial-check.py`
-and `pr-open/diagram-plan.py`, and the `pr-issue` parser (`.github/scripts/check-pr-issue.sh`, with a stub `gh`).
+and `pr-open/diagram-plan.py`, the `pr-issue` parser (`.github/scripts/check-pr-issue.sh`, with a stub `gh`),
+and the `main-guard` retry loop (`.github/scripts/main-guard.sh`, with a stub `gh` and no pause).
 
 - **A fix PR adds the regression test** that fails before the fix and passes after it — in the module that owns the
   code (`tests/test_<module>.py`), on a temp store or `CONTEXT_ROOT`, never on this machine's `.context/`.
@@ -341,7 +342,8 @@ Three tiers, one rule book — [`docs/REVIEW.md`](REVIEW.md):
 - GitHub's `main` ruleset requires a PR and blocks force-pushes and deletes, but repo admins bypass it and it
   does not check the verdict or the threads, so the gate is this file, `hooks/pre-push` and `auto-merge.yml`
   (it merges only what passed every gate; everything else waits for the owner) — `main-guard.yml` is
-  the server-side backstop, flagging (not blocking) a commit on `main` that isn't a squash-merged PR.
+  the server-side backstop, retrying the lookup a few times before it flags (not blocks) a commit on
+  `main` that isn't a squash-merged PR.
 
 Setup, once, by the repo owner: `claude setup-token` locally (Claude Pro/Max), add the value as the
 `CLAUDE_CODE_OAUTH_TOKEN` repository secret (`gh secret set CLAUDE_CODE_OAUTH_TOKEN -R <owner>/ai-baton`),
